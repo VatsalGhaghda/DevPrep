@@ -1,0 +1,37 @@
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(124, 58, 237, 0.5);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(124, 58, 237, 0.7);
+}
+
+/* Smooth transitions for inputs */
+input, button, select, textarea {
+    transition-property: border-color, background-color, color, box-shadow;
+    transition-duration: 300ms;
+    transition-timing-function: ease-in-out;
+}
+
+/* Remove default focus outline and add custom glow */
+input:focus, button:focus, select:focus, textarea:focus {
+    outline: none;
+}
+
+/* Prevent text selection on buttons */
+button {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}

@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build output
+build/
+dist/
+coverage/
+
+# CRA / Next caches
+.cache/
+
+# Backend runtime uploads (if any)
+backend/uploads/
+
+# Misc
+*.pid
+*.seed
+*.tgz
+
+#.md files
+PROJECT_DOCUMENTATION.md
+PROJECT_TASK_LIST.md
