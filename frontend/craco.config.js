@@ -1,7 +1,3 @@
 module.exports = {
-  style: {
-    postcss: {
-      mode: 'file',
-    },
-  },
+  // Empty config to use default Create React App setup
 };

@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, Eye, EyeOff, Sparkles, Code } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import FloatingLabelInput from '../components/FloatingLabelInput';
 import { AnimatedDeveloper, EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
 import { authAPI } from '../services/api';
 
 const Auth = () => {
+  const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -16,6 +19,23 @@ const Auth = () => {
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+
+  // Check if user is already logged in
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          await authAPI.verify();
+          navigate('/dashboard');
+        } catch (error) {
+          localStorage.removeItem('token');
+        }
+      }
+    };
+
+    checkAuthStatus();
+  }, [navigate]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -62,14 +82,39 @@ const Auth = () => {
         ? { email: formData.email, password: formData.password }
         : { name: formData.name, email: formData.email, password: formData.password };
 
-      const res = isLogin ? await authAPI.login(payload) : await authAPI.register(payload);
-      const { token } = res.data;
-
-      localStorage.setItem('token', token);
-      alert(isLogin ? 'Logged in!' : 'Registered!');
-      // TODO: redirect to dashboard
+      if (isLogin) {
+        // For login, check if user exists first
+        try {
+          const res = await authAPI.login(payload);
+          const { token } = res.data;
+          
+          localStorage.setItem('token', token);
+          toast.success('Successfully logged in!');
+          navigate('/dashboard');
+        } catch (loginErr) {
+          // Handle specific login errors
+          if (loginErr.response?.status === 401) {
+            toast.error('Invalid email or password. Please check your credentials.');
+          } else if (loginErr.response?.status === 404) {
+            toast.error('User not found. Please register first.');
+          } else {
+            const msg = loginErr.response?.data?.message || 'Login failed';
+            toast.error(msg);
+          }
+          setErrors({ form: 'Login failed. Please try again.' });
+        }
+      } else {
+        // For registration
+        const res = await authAPI.register(payload);
+        const { token } = res.data;
+        
+        localStorage.setItem('token', token);
+        toast.success('Registration successful!');
+        navigate('/dashboard');
+      }
     } catch (err) {
       const msg = err.response?.data?.message || 'Something went wrong';
+      toast.error(msg);
       setErrors({ form: msg });
     } finally {
       setLoading(false);
