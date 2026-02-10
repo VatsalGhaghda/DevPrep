@@ -66,14 +66,14 @@ async function getResume(req, res, next) {
 
 async function deleteResume(req, res, next) {
   try {
-    const resume = await Resume.findById(req.params.id);
+    const resume = req.resource || (await Resume.findById(req.params.id));
 
     if (!resume) {
       res.status(404);
       throw new Error('Resume not found');
     }
 
-    if (String(resume.userId) !== String(req.user._id)) {
+    if (!req.resource && String(resume.userId) !== String(req.user._id)) {
       res.status(403);
       throw new Error('Forbidden');
     }

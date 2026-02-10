@@ -1,12 +1,14 @@
 const express = require('express');
-const { body } = require('express-validator');
+const { body, query } = require('express-validator');
 
 const {
   register,
   login,
   forgotPassword,
   resetPassword,
-  verify
+  verify,
+  verifyEmail,
+  resendVerification
 } = require('../controllers/authController');
 const { validateRequest } = require('../middleware/validateRequest');
 
@@ -44,6 +46,7 @@ router.post(
   '/reset-password',
   [
     body('token').notEmpty().withMessage('Reset token is required'),
+    body('email').trim().isEmail().withMessage('Valid email is required'),
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
   ],
   validateRequest,
@@ -51,5 +54,19 @@ router.post(
 );
 
 router.get('/verify', verify);
+
+router.get(
+  '/verify-email',
+  [query('token').notEmpty().withMessage('Token is required'), query('email').isEmail().withMessage('Valid email is required')],
+  validateRequest,
+  verifyEmail
+);
+
+router.post(
+  '/resend-verification',
+  [body('email').trim().isEmail().withMessage('Valid email is required')],
+  validateRequest,
+  resendVerification
+);
 
 module.exports = router;

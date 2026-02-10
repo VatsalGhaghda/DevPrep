@@ -8,6 +8,7 @@ const FloatingLabelInput = ({
   value, 
   onChange, 
   error,
+  className = '',
   ...props 
 }) => {
   const [isFocused, setIsFocused] = useState(false);
@@ -33,6 +34,7 @@ const FloatingLabelInput = ({
               ? 'border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.3)]' 
               : 'border-white/10 hover:border-white/20'
           }
+          ${className}
         `}
         placeholder={label}
         data-testid={`input-${id}`}

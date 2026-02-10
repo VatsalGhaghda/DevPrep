@@ -22,6 +22,10 @@ async function protect(req, res, next) {
     req.user = user;
     return next();
   } catch (err) {
+    if (err && (err.name === 'TokenExpiredError' || err.name === 'JsonWebTokenError')) {
+      res.status(401);
+      return next(new Error('Not authorized'));
+    }
     return next(err);
   }
 }

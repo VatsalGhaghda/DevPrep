@@ -3,6 +3,13 @@ const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema(
   {
+    clerkUserId: {
+      type: String,
+      default: '',
+      unique: true,
+      sparse: true,
+      index: true
+    },
     name: {
       type: String,
       required: true,
@@ -19,10 +26,14 @@ const userSchema = new mongoose.Schema(
       maxlength: 254,
       match: [/^\S+@\S+\.\S+$/, 'Invalid email address']
     },
+    googleId: {
+      type: String,
+      default: '',
+      index: true
+    },
     password: {
       type: String,
-      required: true,
-      minlength: 6,
+      default: '',
       select: false
     },
     resetPasswordToken: {
@@ -30,6 +41,18 @@ const userSchema = new mongoose.Schema(
       default: ''
     },
     resetPasswordExpires: {
+      type: Date,
+      default: null
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false
+    },
+    emailVerificationToken: {
+      type: String,
+      default: ''
+    },
+    emailVerificationExpires: {
       type: Date,
       default: null
     },
@@ -70,6 +93,10 @@ const userSchema = new mongoose.Schema(
 
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
+    return;
+  }
+
+  if (!this.password) {
     return;
   }
 

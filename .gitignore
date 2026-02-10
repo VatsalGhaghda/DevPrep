@@ -37,6 +37,4 @@ backend/uploads/
 *.seed
 *.tgz
 
-#.md files
-PROJECT_DOCUMENTATION.md
-PROJECT_TASK_LIST.md
+*.md 

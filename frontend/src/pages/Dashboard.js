@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useAuth, useUser, useClerk } from '@clerk/clerk-react';
 import {
   LayoutDashboard,
   FileUp,
@@ -11,24 +12,59 @@ import {
   BookOpen,
   Sparkles,
   ClipboardCheck,
-  ChevronRight
+  ChevronRight,
+  LogOut,
+  User
 } from 'lucide-react';
 import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
 import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import LoadingSpinner, { FullPageLoader } from '../components/ui/LoadingSpinner';
+import { clerkAPI } from '../services/api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const { user } = useUser();
+  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { signOut } = useClerk();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [buttonLoading, setButtonLoading] = useState(false);
-  const [fullPageLoading, setFullPageLoading] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const didSyncRef = useRef(false);
+
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!user) return;
+    if (didSyncRef.current) return;
+
+    didSyncRef.current = true;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        await clerkAPI.syncMe(token);
+      } catch (_) {
+        // Intentionally ignore: webhooks may still cover this; don't spam users with errors
+      }
+    })();
+  }, [authLoaded, getToken, user]);
 
   const knownRoutes = useMemo(() => new Set(['/dashboard']), []);
+
+  const handleLogout = async () => {
+    if (logoutLoading) return;
+    setLogoutLoading(true);
+    try {
+      // Let Clerk handle navigation to avoid double redirects / double loads
+      await signOut({ redirectUrl: '/login' });
+    } catch (error) {
+      toast.error('Failed to logout');
+      setLogoutLoading(false);
+    }
+  };
 
   const safeNavigate = (path) => {
     if (path === '/logout') {
@@ -184,10 +220,6 @@ const Dashboard = () => {
     []
   );
 
-  if (fullPageLoading) {
-    return <FullPageLoader label="Loading dashboard..." />;
-  }
-
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-[#0f172a] via-[#030712] to-[#020617] text-white overflow-hidden relative">
       <EnhancedAnimatedBackground />
@@ -202,17 +234,78 @@ const Dashboard = () => {
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
               items={sidebarItems}
               onNavigate={safeNavigate}
-              profile={{ name: 'User', subtitle: 'DevPrep' }}
+              profile={{ 
+                name: user?.firstName || user?.username || 'User', 
+                subtitle: user?.primaryEmailAddress?.emailAddress || 'DevPrep' 
+              }}
             />
 
             <div className="flex-1 min-w-0">
-              <Navbar
-                brand="DevPrep"
-                activeLabel="Dashboard"
-                links={navbarLinks}
-                onNavigate={safeNavigate}
-                onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-              />
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <Navbar
+                    brand="DevPrep"
+                    activeLabel="Dashboard"
+                    links={navbarLinks}
+                    onNavigate={safeNavigate}
+                    onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  className="hidden lg:flex items-center justify-center gap-2 h-[66px] px-4 rounded-2xl backdrop-blur-xl bg-white/5 border border-white/10 hover:border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.35)] text-sm font-semibold text-red-200 hover:text-red-100"
+                  onClick={() => setConfirmLogoutOpen(true)}
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                className="mt-6 relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.35)]"
+              >
+                <div className="absolute inset-0">
+                  <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-violet-600/20 blur-3xl" />
+                  <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-cyan-600/15 blur-3xl" />
+                </div>
+
+                <div className="relative p-6 sm:p-7 flex flex-col sm:flex-row sm:items-center gap-5">
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-300">Welcome back</div>
+                    <div className="text-2xl sm:text-3xl font-semibold mt-1 truncate">
+                      {user?.firstName || user?.username || 'User'}
+                    </div>
+                    <div className="text-sm text-slate-400 mt-2">
+                      Pick up where you left off — or start a new session.
+                    </div>
+                  </div>
+
+                  <div className="sm:ml-auto flex items-center gap-3">
+                    <motion.button
+                      type="button"
+                      whileHover={{ y: -1 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="px-4 py-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-white/10 hover:border-white/20 font-semibold"
+                      onClick={() => safeNavigate('/questions/generate')}
+                    >
+                      Generate questions
+                    </motion.button>
+                    <motion.button
+                      type="button"
+                      whileHover={{ y: -1 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="px-4 py-2 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200"
+                      onClick={() => safeNavigate('/interview/mock')}
+                    >
+                      Start mock
+                    </motion.button>
+                  </div>
+                </div>
+              </motion.div>
 
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
@@ -237,14 +330,15 @@ const Dashboard = () => {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.5, delay: 0.08 + i * 0.05 }}
-                          whileHover={{ scale: 1.01 }}
+                          whileHover={{ scale: 1.01, y: -2 }}
                           whileTap={{ scale: 0.99 }}
-                          className="text-left relative overflow-hidden rounded-2xl p-4 bg-white/5 border border-white/10 hover:border-white/20"
+                          className="text-left relative overflow-hidden rounded-2xl p-4 bg-white/5 border border-white/10 hover:border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
                           onClick={() => {
                             safeNavigate(path);
                           }}
                         >
                           <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
+                          <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-white/5" />
                           <div className="relative flex items-start gap-3">
                             <div className="w-11 h-11 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
                               <Icon className="w-5 h-5 text-white" />
@@ -283,14 +377,15 @@ const Dashboard = () => {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.5, delay: 0.18 + i * 0.06 }}
-                          whileHover={{ scale: 1.01 }}
+                          whileHover={{ scale: 1.01, y: -2 }}
                           whileTap={{ scale: 0.99 }}
-                          className="text-left relative overflow-hidden rounded-2xl p-4 bg-white/5 border border-white/10 hover:border-white/20"
+                          className="text-left relative overflow-hidden rounded-2xl p-4 bg-white/5 border border-white/10 hover:border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
                           onClick={() => {
                             safeNavigate(path);
                           }}
                         >
                           <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
+                          <div className="absolute inset-0 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-white/5" />
                           <div className="relative flex items-start gap-3">
                             <div className="w-11 h-11 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
                               <Icon className="w-5 h-5 text-white" />
@@ -318,15 +413,19 @@ const Dashboard = () => {
 
                     <div className="mt-4 space-y-3">
                       {today.map(({ label, Icon }) => (
-                        <div
+                        <motion.div
                           key={label}
-                          className="flex items-center gap-3 rounded-xl bg-white/5 border border-white/10 px-3 py-2"
+                          initial={{ opacity: 0, x: 6 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.35 }}
+                          whileHover={{ x: 2 }}
+                          className="flex items-center gap-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 px-3 py-2"
                         >
                           <div className="w-9 h-9 rounded-lg bg-gradient-to-r from-violet-600/25 to-indigo-600/10 border border-white/10 flex items-center justify-center">
                             <Icon className="w-4 h-4 text-violet-200" />
                           </div>
                           <div className="text-sm text-slate-200">{label}</div>
-                        </div>
+                        </motion.div>
                       ))}
                     </div>
                   </div>
@@ -351,85 +450,6 @@ const Dashboard = () => {
                       ))}
                     </div>
                   </div>
-
-                  <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-lg font-semibold">System UI</div>
-                        <div className="text-sm text-slate-400 mt-1">Toasts, modal, and loading states</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                        onClick={() => toast.success('Success toast')}
-                      >
-                        Success
-                      </button>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                        onClick={() => toast.error('Error toast')}
-                      >
-                        Error
-                      </button>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                        onClick={() => toast.warning('Warning toast')}
-                      >
-                        Warning
-                      </button>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                        onClick={() => toast.info('Info toast')}
-                      >
-                        Info
-                      </button>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-white/10 hover:border-white/20 text-sm font-semibold"
-                        onClick={() => setConfirmLogoutOpen(true)}
-                      >
-                        Open Modal
-                      </button>
-                      <button
-                        type="button"
-                        className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm font-semibold flex items-center justify-center gap-2"
-                        onClick={() => {
-                          if (buttonLoading) return;
-                          setButtonLoading(true);
-                          window.setTimeout(() => {
-                            setButtonLoading(false);
-                            toast.success('Done');
-                          }, 900);
-                        }}
-                      >
-                        {buttonLoading ? (
-                          <>
-                            <LoadingSpinner size={16} />
-                            Loading
-                          </>
-                        ) : (
-                          'Button Loading'
-                        )}
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="mt-3 w-full px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                      onClick={() => setFullPageLoading(true)}
-                    >
-                      Show Full-page Loader
-                    </button>
-                  </div>
                 </div>
               </motion.div>
 
@@ -441,7 +461,7 @@ const Dashboard = () => {
 
       <Modal
         open={confirmLogoutOpen}
-        title="Confirm action"
+        title="Confirm Logout"
         onClose={() => setConfirmLogoutOpen(false)}
         footer={
           <div className="flex items-center justify-end gap-3">
@@ -455,17 +475,14 @@ const Dashboard = () => {
             <button
               type="button"
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-white/10 hover:border-white/20 font-semibold"
-              onClick={() => {
-                setConfirmLogoutOpen(false);
-                toast.success('Confirmed');
-              }}
+              onClick={handleLogout}
             >
-              Confirm
+              Logout
             </button>
           </div>
         }
       >
-        This is a reusable modal component. Use it for confirmations and form dialogs.
+        Are you sure you want to logout? You will need to sign in again to access your dashboard.
       </Modal>
     </div>
   );

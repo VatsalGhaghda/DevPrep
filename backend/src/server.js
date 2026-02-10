@@ -15,10 +15,8 @@ async function start() {
     await connectDB();
 
     server = app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
     });
   } catch (err) {
-    console.error('Failed to start server:', err && err.message ? err.message : err);
     process.exit(1);
   }
 }
@@ -33,7 +31,6 @@ async function shutdown(signal) {
       await mongoose.connection.close();
     }
   } catch (err) {
-    console.error(`Error during shutdown (${signal}):`, err && err.message ? err.message : err);
   } finally {
     process.exit(0);
   }

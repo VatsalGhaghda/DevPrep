@@ -5,12 +5,17 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import FloatingLabelInput from '../components/FloatingLabelInput';
 import { AnimatedDeveloper, EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
-import { authAPI } from '../services/api';
+import { useSignIn, useSignUp, useUser } from '@clerk/clerk-react';
 
 const Auth = () => {
   const navigate = useNavigate();
+  const { isSignedIn } = useUser();
+  const { isLoaded: isSignInLoaded, signIn, setActive: setActiveSignIn } = useSignIn();
+  const { isLoaded: isSignUpLoaded, signUp, setActive: setActiveSignUp } = useSignUp();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [oauthRedirectLoading, setOauthRedirectLoading] = useState(false);
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -19,23 +24,14 @@ const Auth = () => {
   });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
 
-  // Check if user is already logged in
   useEffect(() => {
-    const checkAuthStatus = async () => {
-      const token = localStorage.getItem('token');
-      if (token) {
-        try {
-          await authAPI.verify();
-          navigate('/dashboard');
-        } catch (error) {
-          localStorage.removeItem('token');
-        }
-      }
-    };
-
-    checkAuthStatus();
-  }, [navigate]);
+    if (isSignedIn) {
+      navigate('/dashboard');
+    }
+  }, [isSignedIn, navigate]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -47,6 +43,14 @@ const Auth = () => {
 
   const validateForm = () => {
     const newErrors = {};
+
+    if (!isLogin && needsEmailVerification) {
+      if (!verificationCode.trim()) {
+        newErrors.verificationCode = 'Verification code is required';
+      }
+      setErrors(newErrors);
+      return Object.keys(newErrors).length === 0;
+    }
     
     if (!isLogin && !formData.name.trim()) {
       newErrors.name = 'Name is required';
@@ -74,46 +78,63 @@ const Auth = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading || oauthRedirectLoading) return;
     if (!validateForm()) return;
 
     setLoading(true);
     try {
-      const payload = isLogin
-        ? { email: formData.email, password: formData.password }
-        : { name: formData.name, email: formData.email, password: formData.password };
-
       if (isLogin) {
-        // For login, check if user exists first
-        try {
-          const res = await authAPI.login(payload);
-          const { token } = res.data;
-          
-          localStorage.setItem('token', token);
-          toast.success('Successfully logged in!');
-          navigate('/dashboard');
-        } catch (loginErr) {
-          // Handle specific login errors
-          if (loginErr.response?.status === 401) {
-            toast.error('Invalid email or password. Please check your credentials.');
-          } else if (loginErr.response?.status === 404) {
-            toast.error('User not found. Please register first.');
-          } else {
-            const msg = loginErr.response?.data?.message || 'Login failed';
-            toast.error(msg);
-          }
-          setErrors({ form: 'Login failed. Please try again.' });
+        if (!isSignInLoaded) return;
+
+        const res = await signIn.create({
+          identifier: formData.email,
+          password: formData.password
+        });
+
+        if (res.status === 'complete') {
+          await setActiveSignIn({ session: res.createdSessionId });
+          toast.success('Login successful!');
+        } else {
+          const msg = 'Additional steps are required to sign in.';
+          toast.error(msg);
+          setErrors({ form: msg });
         }
       } else {
-        // For registration
-        const res = await authAPI.register(payload);
-        const { token } = res.data;
-        
-        localStorage.setItem('token', token);
-        toast.success('Registration successful!');
-        navigate('/dashboard');
+        if (!isSignUpLoaded) return;
+
+        if (needsEmailVerification) {
+          const attempt = await signUp.attemptEmailAddressVerification({
+            code: verificationCode
+          });
+
+          if (attempt.status === 'complete') {
+            await setActiveSignUp({ session: attempt.createdSessionId });
+            toast.success('Email verified!');
+          } else {
+            const msg = 'Verification is not complete yet. Please try again.';
+            toast.error(msg);
+            setErrors({ form: msg });
+          }
+
+          return;
+        }
+
+        const res = await signUp.create({
+          emailAddress: formData.email,
+          password: formData.password
+        });
+
+        if (res.status === 'complete') {
+          await setActiveSignUp({ session: res.createdSessionId });
+          toast.success('Account created!');
+        } else {
+          await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+          setNeedsEmailVerification(true);
+          toast.success('Check your email for the verification code.');
+        }
       }
     } catch (err) {
-      const msg = err.response?.data?.message || 'Something went wrong';
+      const msg = err?.errors?.[0]?.message || err?.message || 'Something went wrong';
       toast.error(msg);
       setErrors({ form: msg });
     } finally {
@@ -124,6 +145,8 @@ const Auth = () => {
   const toggleAuthMode = () => {
     setIsLogin(!isLogin);
     setErrors({});
+    setNeedsEmailVerification(false);
+    setVerificationCode('');
     setFormData({
       name: '',
       email: '',
@@ -395,11 +418,12 @@ const Auth = () => {
                       value={formData.password}
                       onChange={(e) => handleInputChange('password', e.target.value)}
                       error={errors.password}
+                      className="pr-12"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-3.5 text-slate-400 hover:text-white transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-200 hover:text-white transition-colors"
                       data-testid="toggle-password"
                     >
                       {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
@@ -427,6 +451,19 @@ const Auth = () => {
                     </motion.div>
                   )}
 
+                  {/* Verification Code */}
+                  {!isLogin && needsEmailVerification && (
+                    <motion.div variants={itemVariants}>
+                      <FloatingLabelInput
+                        id="verificationCode"
+                        type="text"
+                        label="Verification Code"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value)}
+                        error={errors.verificationCode}
+                      />
+                    </motion.div>
+                  )}
                   {/* Remember Me / Forgot Password */}
                   {isLogin && (
                     <motion.div variants={itemVariants} className="flex items-center justify-between mb-6 text-sm">
@@ -442,6 +479,7 @@ const Auth = () => {
                         type="button" 
                         className="text-cyan-400 hover:text-cyan-300 transition-colors"
                         data-testid="forgot-password"
+                        onClick={() => navigate('/forgot-password')}
                       >
                         Forgot password?
                       </button>
@@ -452,7 +490,8 @@ const Auth = () => {
                   <motion.button
                     variants={itemVariants}
                     type="submit"
-                    className="relative w-full py-3.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-bold rounded-lg overflow-hidden group"
+                    disabled={loading}
+                    className={`relative w-full py-3.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-bold rounded-lg overflow-hidden group ${loading ? 'opacity-80 cursor-not-allowed' : ''}`}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     data-testid="submit-button"
@@ -476,7 +515,9 @@ const Auth = () => {
                       }}
                     />
                     <span className="relative z-10 flex items-center justify-center gap-2">
-                      {loading ? 'Please wait...' : (isLogin ? 'Sign In' : 'Create Account')}
+                      {loading
+                        ? (isLogin ? 'Signing in…' : needsEmailVerification ? 'Verifying…' : 'Creating account…')
+                        : (isLogin ? 'Sign In' : 'Create Account')}
                       {!loading && (
                         <motion.span
                           animate={{ x: [0, 5, 0] }}
@@ -502,10 +543,23 @@ const Auth = () => {
                   <motion.div variants={itemVariants} className="grid grid-cols-2 gap-3">
                     <motion.button
                       type="button"
-                      className="relative flex items-center justify-center gap-2 py-3 bg-white/5 border border-white/10 rounded-lg overflow-hidden group"
+                      disabled={loading || oauthRedirectLoading}
+                      className={`relative flex items-center justify-center gap-2 py-3 bg-white/5 border border-white/10 rounded-lg overflow-hidden group ${
+                        loading || oauthRedirectLoading ? 'opacity-80 cursor-not-allowed' : ''
+                      }`}
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       data-testid="google-login"
+                      onClick={() => {
+                        if (!isSignInLoaded) return;
+                        if (loading || oauthRedirectLoading) return;
+                        setOauthRedirectLoading(true);
+                        signIn.authenticateWithRedirect({
+                          strategy: 'oauth_google',
+                          redirectUrl: '/sso',
+                          redirectUrlComplete: '/dashboard'
+                        });
+                      }}
                     >
                       <motion.div
                         className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-red-500/20 opacity-0 group-hover:opacity-100"
@@ -521,10 +575,23 @@ const Auth = () => {
                     </motion.button>
                     <motion.button
                       type="button"
-                      className="relative flex items-center justify-center gap-2 py-3 bg-white/5 border border-white/10 rounded-lg overflow-hidden group"
+                      disabled={loading || oauthRedirectLoading}
+                      className={`relative flex items-center justify-center gap-2 py-3 bg-white/5 border border-white/10 rounded-lg overflow-hidden group ${
+                        loading || oauthRedirectLoading ? 'opacity-80 cursor-not-allowed' : ''
+                      }`}
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       data-testid="github-login"
+                      onClick={() => {
+                        if (!isSignInLoaded) return;
+                        if (loading || oauthRedirectLoading) return;
+                        setOauthRedirectLoading(true);
+                        signIn.authenticateWithRedirect({
+                          strategy: 'oauth_github',
+                          redirectUrl: '/sso',
+                          redirectUrlComplete: '/dashboard'
+                        });
+                      }}
                     >
                       <motion.div
                         className="absolute inset-0 bg-gradient-to-r from-slate-700/20 to-slate-500/20 opacity-0 group-hover:opacity-100"

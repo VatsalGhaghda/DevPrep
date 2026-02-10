@@ -6,8 +6,10 @@ const multer = require('multer');
 const { param } = require('express-validator');
 
 const { protect } = require('../middleware/auth');
+const { requireOwnership } = require('../middleware/ownership');
 const { validateRequest } = require('../middleware/validateRequest');
 const { uploadResume, getResume, deleteResume } = require('../controllers/resumeController');
+const Resume = require('../models/Resume');
 
 const router = express.Router();
 
@@ -44,6 +46,7 @@ router.delete(
   protect,
   [param('id').isMongoId().withMessage('Invalid id')],
   validateRequest,
+  requireOwnership({ Model: Resume, param: 'id', ownerField: 'userId' }),
   deleteResume
 );
 

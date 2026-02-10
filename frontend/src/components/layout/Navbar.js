@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Menu, X } from 'lucide-react';
+import { useUser } from '@clerk/clerk-react';
 
 const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSidebar, links = [], onNavigate }) => {
+  const { user } = useUser();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
@@ -85,10 +87,18 @@ const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSide
               onClick={() => setUserMenuOpen((v) => !v)}
               className="h-10 px-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center gap-2"
             >
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-r from-violet-600/35 to-indigo-600/20 border border-white/10" />
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-r from-violet-600/35 to-indigo-600/20 border border-white/10 flex items-center justify-center">
+                <span className="text-xs font-semibold text-white">
+                  {(user?.firstName?.[0] || user?.username?.[0] || user?.primaryEmailAddress?.emailAddress?.[0] || 'U').toUpperCase()}
+                </span>
+              </div>
               <div className="hidden sm:block text-left">
-                <div className="text-sm text-slate-200 leading-4">User</div>
-                <div className="text-xs text-slate-500 leading-4">Menu</div>
+                <div className="text-sm text-slate-200 leading-4">
+                  {user?.firstName || user?.username || 'User'}
+                </div>
+                <div className="text-xs text-slate-500 leading-4 truncate max-w-32">
+                  {user?.primaryEmailAddress?.emailAddress || 'Menu'}
+                </div>
               </div>
               <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
             </button>
