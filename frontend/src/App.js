@@ -8,6 +8,8 @@ import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import OAuthSuccess from './pages/OAuthSuccess';
+import Profile from './pages/Profile';
+import ProfileEdit from './pages/ProfileEdit';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -37,6 +39,22 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Dashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/profile" 
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/profile/edit" 
+                element={
+                  <ProtectedRoute>
+                    <ProfileEdit />
                   </ProtectedRoute>
                 } 
               />

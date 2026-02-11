@@ -61,7 +61,19 @@ export const clerkAPI = {
           Authorization: `Bearer ${clerkToken}`
         }
       }
-    )
+    ),
+  getProfile: (clerkToken) =>
+    api.get('/clerk/profile', {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`
+      }
+    }),
+  updateProfile: (clerkToken, data) =>
+    api.put('/clerk/profile', data, {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`
+      }
+    })
 };
 
 export default api;

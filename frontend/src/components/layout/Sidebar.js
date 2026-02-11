@@ -9,7 +9,8 @@ const Sidebar = ({
   onToggleCollapsed,
   items = [],
   onNavigate,
-  profile = { name: 'User', subtitle: 'DevPrep' }
+  profile = { name: 'User', subtitle: 'DevPrep' },
+  profilePath
 }) => {
   const content = (
     <motion.aside
@@ -18,15 +19,30 @@ const Sidebar = ({
       transition={{ type: 'spring', stiffness: 260, damping: 26 }}
     >
       <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-cyan-400/20 via-violet-400/20 to-pink-400/20 border border-white/10" />
+        <button
+          type="button"
+          className="flex items-center gap-3 min-w-0 text-left"
+          onClick={() => {
+            if (profilePath && onNavigate) onNavigate(profilePath);
+          }}
+          aria-label="Open profile"
+        >
+          {profile.avatar ? (
+            <img
+              src={profile.avatar}
+              alt="Avatar"
+              className="w-10 h-10 rounded-xl border border-white/10 object-cover"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-cyan-400/20 via-violet-400/20 to-pink-400/20 border border-white/10" />
+          )}
           {!collapsed && (
             <div className="min-w-0">
               <div className="text-sm font-semibold text-slate-100 truncate">{profile.name}</div>
-              <div className="text-xs text-slate-500 truncate">{profile.subtitle}</div>
+              {profile.subtitle && <div className="text-xs text-slate-500 truncate">{profile.subtitle}</div>}
             </div>
           )}
-        </div>
+        </button>
 
         <button
           type="button"

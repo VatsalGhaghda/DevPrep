@@ -13,7 +13,6 @@ import {
   Sparkles,
   ClipboardCheck,
   ChevronRight,
-  LogOut,
   User
 } from 'lucide-react';
 import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
@@ -32,6 +31,7 @@ const Dashboard = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [dbProfile, setDbProfile] = useState(null);
   const didSyncRef = useRef(false);
 
   useEffect(() => {
@@ -52,7 +52,29 @@ const Dashboard = () => {
     })();
   }, [authLoaded, getToken, user]);
 
-  const knownRoutes = useMemo(() => new Set(['/dashboard']), []);
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!user) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await clerkAPI.getProfile(token);
+        setDbProfile(res.data?.user || null);
+      } catch (_) {
+        // Ignore
+      }
+    })();
+  }, [authLoaded, getToken, user]);
+
+  const displayName =
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+    user?.username ||
+    'User';
+
+  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile']), []);
 
   const handleLogout = async () => {
     if (logoutLoading) return;
@@ -199,6 +221,7 @@ const Dashboard = () => {
   const sidebarItems = useMemo(
     () => [
       { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
+      { label: 'Profile', path: '/profile', Icon: User },
       { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
       { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
       { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
@@ -235,9 +258,10 @@ const Dashboard = () => {
               items={sidebarItems}
               onNavigate={safeNavigate}
               profile={{ 
-                name: user?.firstName || user?.username || 'User', 
-                subtitle: user?.primaryEmailAddress?.emailAddress || 'DevPrep' 
+                name: displayName,
+                avatar: (dbProfile && dbProfile.avatar) || user?.imageUrl || ''
               }}
+              profilePath="/profile"
             />
 
             <div className="flex-1 min-w-0">
@@ -249,17 +273,9 @@ const Dashboard = () => {
                     links={navbarLinks}
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+                    avatarUrl={(dbProfile && dbProfile.avatar) || user?.imageUrl || ''}
                   />
                 </div>
-
-                <button
-                  type="button"
-                  className="hidden lg:flex items-center justify-center gap-2 h-[66px] px-4 rounded-2xl backdrop-blur-xl bg-white/5 border border-white/10 hover:border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.35)] text-sm font-semibold text-red-200 hover:text-red-100"
-                  onClick={() => setConfirmLogoutOpen(true)}
-                >
-                  <LogOut className="w-4 h-4" />
-                  Logout
-                </button>
               </div>
 
               <motion.div
@@ -277,7 +293,7 @@ const Dashboard = () => {
                   <div className="min-w-0">
                     <div className="text-sm text-slate-300">Welcome back</div>
                     <div className="text-2xl sm:text-3xl font-semibold mt-1 truncate">
-                      {user?.firstName || user?.username || 'User'}
+                      {displayName}
                     </div>
                     <div className="text-sm text-slate-400 mt-2">
                       Pick up where you left off — or start a new session.

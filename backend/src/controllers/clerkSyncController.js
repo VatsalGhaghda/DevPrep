@@ -66,7 +66,14 @@ async function upsertUserFromClerkApi(clerkUser) {
   }
 
   if (name) user.name = name;
-  if (avatar) user.avatar = avatar;
+
+  const currentAvatar = typeof user.avatar === 'string' ? user.avatar : '';
+  const isCustomAvatar = currentAvatar.startsWith('data:');
+  const isHttpAvatar = currentAvatar.startsWith('http://') || currentAvatar.startsWith('https://');
+
+  if (avatar && (!currentAvatar || (!isCustomAvatar && isHttpAvatar))) {
+    user.avatar = avatar;
+  }
   user.isEmailVerified = verified || user.isEmailVerified;
 
   await user.save();
@@ -111,4 +118,4 @@ async function syncMe(req, res, next) {
   }
 }
 
-module.exports = { syncMe };
+module.exports = { syncMe, upsertUserFromClerkApi, getClerkUserIdFromAuth };

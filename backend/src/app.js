@@ -25,7 +25,7 @@ app.use(cors());
 // Webhooks must be mounted BEFORE express.json so we can verify raw payload signatures
 app.use('/api/webhooks', webhookRoutes);
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });

@@ -1,16 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Menu, X } from 'lucide-react';
 import { useUser } from '@clerk/clerk-react';
+import { createPortal } from 'react-dom';
 
-const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSidebar, links = [], onNavigate }) => {
+const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSidebar, links = [], onNavigate, avatarUrl }) => {
   const { user } = useUser();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
+  const userButtonRef = useRef(null);
+  const portalMenuRef = useRef(null);
+  const [userMenuPos, setUserMenuPos] = useState({ top: 0, left: 0, width: 0 });
+
+  const displayName =
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+    user?.username ||
+    'User';
+
+  const effectiveAvatar = avatarUrl || user?.imageUrl || '';
 
   useEffect(() => {
     const onDocClick = (e) => {
+      if (portalMenuRef.current && portalMenuRef.current.contains(e.target)) return;
       if (!userMenuRef.current) return;
       if (!userMenuRef.current.contains(e.target)) {
         setUserMenuOpen(false);
@@ -20,6 +33,35 @@ const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSide
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!userMenuOpen) return;
+
+    const updatePos = () => {
+      const el = userButtonRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+
+      const menuWidth = 208;
+      const gutter = 8;
+      const rawLeft = rect.right - menuWidth;
+      const clampedLeft = Math.max(gutter, Math.min(rawLeft, window.innerWidth - menuWidth - gutter));
+
+      setUserMenuPos({
+        top: rect.bottom + 10,
+        left: clampedLeft,
+        width: rect.width
+      });
+    };
+
+    updatePos();
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+    };
+  }, [userMenuOpen]);
 
   const renderLinks = (className) => {
     return (
@@ -83,55 +125,75 @@ const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSide
 
           <div className="relative" ref={userMenuRef}>
             <button
+              ref={userButtonRef}
               type="button"
               onClick={() => setUserMenuOpen((v) => !v)}
               className="h-10 px-3 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center gap-2"
             >
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-r from-violet-600/35 to-indigo-600/20 border border-white/10 flex items-center justify-center">
-                <span className="text-xs font-semibold text-white">
-                  {(user?.firstName?.[0] || user?.username?.[0] || user?.primaryEmailAddress?.emailAddress?.[0] || 'U').toUpperCase()}
-                </span>
-              </div>
+              {effectiveAvatar ? (
+                <img
+                  src={effectiveAvatar}
+                  alt="Avatar"
+                  className="w-7 h-7 rounded-lg border border-white/10 object-cover"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-r from-violet-600/35 to-indigo-600/20 border border-white/10 flex items-center justify-center">
+                  <span className="text-xs font-semibold text-white">
+                    {(user?.firstName?.[0] || user?.username?.[0] || user?.primaryEmailAddress?.emailAddress?.[0] || 'U').toUpperCase()}
+                  </span>
+                </div>
+              )}
               <div className="hidden sm:block text-left">
                 <div className="text-sm text-slate-200 leading-4">
-                  {user?.firstName || user?.username || 'User'}
-                </div>
-                <div className="text-xs text-slate-500 leading-4 truncate max-w-32">
-                  {user?.primaryEmailAddress?.emailAddress || 'Menu'}
+                  {displayName}
                 </div>
               </div>
               <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
-            <AnimatePresence>
-              {userMenuOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                  transition={{ duration: 0.18 }}
-                  className="absolute right-0 mt-2 w-48 rounded-2xl backdrop-blur-xl bg-white/5 border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.45)] overflow-hidden z-20"
-                >
-                  {[
-                    { label: 'Profile', path: '/profile' },
-                    { label: 'Settings', path: '/settings' },
-                    { label: 'Logout', path: '/logout' }
-                  ].map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/5"
-                      onClick={() => {
-                        setUserMenuOpen(false);
-                        if (onNavigate) onNavigate(item.path);
+            {typeof document !== 'undefined' &&
+              createPortal(
+                <AnimatePresence>
+                  {userMenuOpen && (
+                    <motion.div
+                      ref={portalMenuRef}
+                      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                      transition={{ duration: 0.18 }}
+                      className="fixed w-52 rounded-2xl backdrop-blur-xl bg-slate-950/80 border border-white/15 shadow-[0_10px_30px_rgba(0,0,0,0.55)] z-[9999] flex flex-col overflow-hidden"
+                      style={{
+                        top: userMenuPos.top,
+                        left: userMenuPos.left
                       }}
                     >
-                      {item.label}
-                    </button>
-                  ))}
-                </motion.div>
+                      <button
+                        type="button"
+                        className="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-white/10"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          if (onNavigate) onNavigate('/profile');
+                        }}
+                        aria-label="Open profile"
+                      >
+                        <div className="text-sm font-semibold text-slate-100 leading-5 truncate">{displayName}</div>
+                      </button>
+                      <div className="border-t border-white/10" />
+                      <button
+                        type="button"
+                        className="w-full text-left px-4 py-3 text-sm text-red-200 hover:text-red-100 hover:bg-white/10"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          if (onNavigate) onNavigate('/logout');
+                        }}
+                      >
+                        Logout
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>,
+                document.body
               )}
-            </AnimatePresence>
           </div>
         </div>
       </div>
