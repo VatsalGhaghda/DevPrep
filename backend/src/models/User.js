@@ -5,7 +5,6 @@ const userSchema = new mongoose.Schema(
   {
     clerkUserId: {
       type: String,
-      default: '',
       unique: true,
       sparse: true,
       index: true

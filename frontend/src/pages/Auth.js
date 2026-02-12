@@ -26,6 +26,7 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
+  const [verificationEmailAddressId, setVerificationEmailAddressId] = useState('');
 
   useEffect(() => {
     if (isSignedIn) {
@@ -33,12 +34,32 @@ const Auth = () => {
     }
   }, [isSignedIn, navigate]);
 
+  const splitName = (fullName) => {
+    const parts = String(fullName || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    const firstName = parts[0] || '';
+    const lastName = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    return { firstName, lastName };
+  };
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     // Clear error when user starts typing
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
+  };
+
+  const isStrongPassword = (value) => {
+    const v = String(value || '');
+    if (v.length < 8) return false;
+    if (!/[A-Z]/.test(v)) return false;
+    if (!/[a-z]/.test(v)) return false;
+    if (!/[0-9]/.test(v)) return false;
+    if (!/[^A-Za-z0-9]/.test(v)) return false;
+    return true;
   };
 
   const validateForm = () => {
@@ -64,8 +85,9 @@ const Auth = () => {
     
     if (!formData.password) {
       newErrors.password = 'Password is required';
-    } else if (formData.password.length < 8) {
-      newErrors.password = 'Password must be at least 8 characters';
+    } else if (!isStrongPassword(formData.password)) {
+      newErrors.password =
+        'Password must be at least 8 characters and include uppercase, lowercase, number, and special character';
     }
     
     if (!isLogin && formData.password !== formData.confirmPassword) {
@@ -104,7 +126,8 @@ const Auth = () => {
 
         if (needsEmailVerification) {
           const attempt = await signUp.attemptEmailAddressVerification({
-            code: verificationCode
+            code: verificationCode.trim(),
+            ...(verificationEmailAddressId ? { emailAddressId: verificationEmailAddressId } : {})
           });
 
           if (attempt.status === 'complete') {
@@ -121,7 +144,8 @@ const Auth = () => {
 
         const res = await signUp.create({
           emailAddress: formData.email,
-          password: formData.password
+          password: formData.password,
+          ...splitName(formData.name)
         });
 
         if (res.status === 'complete') {
@@ -129,6 +153,12 @@ const Auth = () => {
           toast.success('Account created!');
         } else {
           await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+          const possibleId =
+            (signUp && signUp.emailAddress && signUp.emailAddress.id) ||
+            signUp.emailAddressId ||
+            (signUp && signUp.verifications && signUp.verifications.emailAddress && signUp.verifications.emailAddress.id) ||
+            '';
+          setVerificationEmailAddressId(possibleId ? String(possibleId) : '');
           setNeedsEmailVerification(true);
           toast.success('Check your email for the verification code.');
         }
@@ -147,6 +177,7 @@ const Auth = () => {
     setErrors({});
     setNeedsEmailVerification(false);
     setVerificationCode('');
+    setVerificationEmailAddressId('');
     setFormData({
       name: '',
       email: '',
@@ -383,6 +414,7 @@ const Auth = () => {
                   onSubmit={handleSubmit}
                   style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                 >
+                  <div id="clerk-captcha" style={{ display: 'none' }} />
                   {/* Registration Fields */}
                   {!isLogin && (
                     <motion.div variants={itemVariants}>

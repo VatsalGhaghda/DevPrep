@@ -72,6 +72,7 @@ const Dashboard = () => {
     user?.fullName ||
     [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
     user?.username ||
+    (dbProfile && dbProfile.name) ||
     'User';
 
   const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile']), []);

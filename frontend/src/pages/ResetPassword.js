@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useSignIn } from '@clerk/clerk-react';
+import { Eye, EyeOff } from 'lucide-react';
 
 const ResetPassword = () => {
   const navigate = useNavigate();
@@ -13,11 +14,83 @@ const ResetPassword = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isPrepared, setIsPrepared] = useState(false);
+  const [didAutoPrepare, setDidAutoPrepare] = useState(false);
+
+  const isStrongPassword = (value) => {
+    const v = String(value || '');
+    if (v.length < 8) return false;
+    if (!/[A-Z]/.test(v)) return false;
+    if (!/[a-z]/.test(v)) return false;
+    if (!/[0-9]/.test(v)) return false;
+    if (!/[^A-Za-z0-9]/.test(v)) return false;
+    return true;
+  };
+
+  const getEmailAddressIdForReset = () => {
+    const factors = Array.isArray(signIn?.supportedFirstFactors) ? signIn.supportedFirstFactors : [];
+    const factor = factors.find((f) => f && f.strategy === 'reset_password_email_code');
+    return factor && factor.emailAddressId ? String(factor.emailAddressId) : '';
+  };
 
   useEffect(() => {
     const stateEmail = location.state && location.state.email ? String(location.state.email) : '';
-    setEmail(stateEmail);
-  }, [location.state]);
+    const params = new URLSearchParams(location.search || '');
+    const queryEmail = params.get('email') ? String(params.get('email')) : '';
+    const resolved = (stateEmail || queryEmail).trim();
+
+    if (!resolved) {
+      toast.error('Please enter your email first');
+      navigate('/forgot-password');
+      return;
+    }
+
+    setEmail(resolved);
+    const statePrepared = Boolean(location.state && location.state.prepared);
+    setIsPrepared(statePrepared);
+  }, [location.search, location.state, navigate]);
+
+  const handleResend = useCallback(async () => {
+    if (!isLoaded) {
+      return;
+    }
+
+    if (!email.trim()) {
+      toast.error('Email is required');
+      return;
+    }
+
+    setResendLoading(true);
+    try {
+      await signIn.create({ identifier: email.trim() });
+
+      const emailAddressId = getEmailAddressIdForReset();
+      await signIn.prepareFirstFactor({
+        strategy: 'reset_password_email_code',
+        ...(emailAddressId ? { emailAddressId } : {})
+      });
+      setIsPrepared(true);
+      toast.success('Reset code sent');
+    } catch (err) {
+      const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || 'Something went wrong';
+      toast.error(msg);
+    } finally {
+      setResendLoading(false);
+    }
+  }, [email, getEmailAddressIdForReset, isLoaded, signIn]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!email.trim()) return;
+    if (isPrepared) return;
+    if (didAutoPrepare) return;
+
+    setDidAutoPrepare(true);
+    handleResend();
+  }, [didAutoPrepare, email, handleResend, isLoaded, isPrepared]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -41,8 +114,8 @@ const ResetPassword = () => {
       return;
     }
 
-    if (password.length < 6) {
-      toast.error('Password must be at least 6 characters');
+    if (!isStrongPassword(password)) {
+      toast.error('Password must be at least 8 characters and include uppercase, lowercase, number, and special character');
       return;
     }
 
@@ -51,9 +124,13 @@ const ResetPassword = () => {
       return;
     }
 
+    if (!isPrepared) {
+      toast.error('Please click Resend code first (refresh clears the verification session)');
+      return;
+    }
+
     setLoading(true);
     try {
-      await signIn.create({ identifier: email.trim() });
       const result = await signIn.attemptFirstFactor({
         strategy: 'reset_password_email_code',
         code: code.trim(),
@@ -83,17 +160,6 @@ const ResetPassword = () => {
 
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="text-sm text-slate-300">Email</label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white outline-none focus:border-white/20"
-              autoComplete="email"
-            />
-          </div>
-
-          <div>
             <label className="text-sm text-slate-300">Reset code</label>
             <input
               value={code}
@@ -102,28 +168,56 @@ const ResetPassword = () => {
               className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white outline-none focus:border-white/20"
               autoComplete="one-time-code"
             />
+            <button
+              type="button"
+              disabled={resendLoading || loading}
+              className="mt-3 text-sm text-cyan-300 hover:text-cyan-200 disabled:opacity-60"
+              onClick={handleResend}
+            >
+              {resendLoading ? 'Sending code...' : 'Resend code'}
+            </button>
           </div>
 
-          <div>
+          <div className="relative">
             <label className="text-sm text-slate-300">New password</label>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              type="password"
-              className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white outline-none focus:border-white/20"
-              autoComplete="new-password"
-            />
+            <div className="relative mt-2">
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type={showPassword ? 'text' : 'password'}
+                className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 pr-12 text-white outline-none focus:border-white/20"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-200 hover:text-white transition-colors"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
 
-          <div>
+          <div className="relative">
             <label className="text-sm text-slate-300">Confirm password</label>
-            <input
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              type="password"
-              className="mt-2 w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-white outline-none focus:border-white/20"
-              autoComplete="new-password"
-            />
+            <div className="relative mt-2">
+              <input
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                type={showConfirmPassword ? 'text' : 'password'}
+                className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 pr-12 text-white outline-none focus:border-white/20"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((s) => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-200 hover:text-white transition-colors"
+                aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+              >
+                {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
 
           <button
