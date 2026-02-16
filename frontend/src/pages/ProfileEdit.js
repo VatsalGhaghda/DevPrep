@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { useAuth, useUser } from '@clerk/clerk-react';
+import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
@@ -20,6 +20,7 @@ import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackgr
 import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
+import Modal from '../components/ui/Modal';
 import { clerkAPI } from '../services/api';
 
 const EXPERIENCE_LEVELS = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
@@ -54,9 +55,11 @@ const ProfileEdit = () => {
   const navigate = useNavigate();
   const { user } = useUser();
   const { getToken, isLoaded: authLoaded } = useAuth();
-
+  const { signOut } = useClerk();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -79,16 +82,32 @@ const ProfileEdit = () => {
     'User';
 
   const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit']),
+    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate']),
     []
   );
 
   const safeNavigate = (path) => {
+    if (path === '/logout') {
+      setConfirmLogoutOpen(true);
+      return;
+    }
+
     if (!knownRoutes.has(path)) {
       toast.info('Coming soon');
       return;
     }
     navigate(path);
+  };
+
+  const handleLogout = async () => {
+    if (logoutLoading) return;
+    setLogoutLoading(true);
+    try {
+      await signOut({ redirectUrl: '/login' });
+    } catch (_) {
+      toast.error('Failed to logout');
+      setLogoutLoading(false);
+    }
   };
 
   const sidebarItems = useMemo(
@@ -525,11 +544,41 @@ const ProfileEdit = () => {
                 </div>
               </motion.div>
 
-              <Footer onNavigate={safeNavigate} />
+              <div className="mt-8">
+                <Footer onNavigate={safeNavigate} />
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <Modal
+        open={confirmLogoutOpen}
+        title="Confirm Logout"
+        onClose={() => setConfirmLogoutOpen(false)}
+        footer={
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200"
+              onClick={() => setConfirmLogoutOpen(false)}
+              disabled={logoutLoading}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-white/10 hover:border-white/20 font-semibold disabled:opacity-60"
+              onClick={handleLogout}
+              disabled={logoutLoading}
+            >
+              Logout
+            </button>
+          </div>
+        }
+      >
+        Are you sure you want to logout? You will need to sign in again to access your dashboard.
+      </Modal>
     </div>
   );
 };

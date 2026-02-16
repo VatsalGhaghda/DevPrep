@@ -10,6 +10,7 @@ import ResetPassword from './pages/ResetPassword';
 import OAuthSuccess from './pages/OAuthSuccess';
 import Profile from './pages/Profile';
 import ProfileEdit from './pages/ProfileEdit';
+import QuestionGenerator from './pages/QuestionGenerator';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -55,6 +56,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ProfileEdit />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/questions/generate" 
+                element={
+                  <ProtectedRoute>
+                    <QuestionGenerator />
                   </ProtectedRoute>
                 } 
               />

@@ -46,15 +46,6 @@ const Sidebar = ({
 
         <button
           type="button"
-          className="hidden md:flex w-9 h-9 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 items-center justify-center"
-          onClick={onToggleCollapsed}
-          aria-label="Toggle sidebar"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4 text-slate-300" /> : <ChevronLeft className="w-4 h-4 text-slate-300" />}
-        </button>
-
-        <button
-          type="button"
           className="md:hidden w-9 h-9 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center justify-center"
           onClick={onCloseMobile}
           aria-label="Close sidebar"
