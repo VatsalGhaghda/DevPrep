@@ -15,8 +15,12 @@ async function start() {
     await connectDB();
 
     server = app.listen(PORT, () => {
+      // eslint-disable-next-line no-console
+      console.log(`API server listening on port ${PORT}`);
     });
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to start server:', err);
     process.exit(1);
   }
 }

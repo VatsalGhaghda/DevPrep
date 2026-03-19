@@ -20,7 +20,7 @@ import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import { clerkAPI } from '../services/api';
+import { clerkAPI, questionsAPI } from '../services/api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -32,6 +32,7 @@ const Dashboard = () => {
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [dbProfile, setDbProfile] = useState(null);
+  const [savedStats, setSavedStats] = useState(null);
   const didSyncRef = useRef(false);
 
   useEffect(() => {
@@ -48,6 +49,22 @@ const Dashboard = () => {
         await clerkAPI.syncMe(token);
       } catch (_) {
         // Intentionally ignore: webhooks may still cover this; don't spam users with errors
+      }
+    })();
+  }, [authLoaded, getToken, user]);
+
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!user) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await questionsAPI.getSavedStats(token);
+        setSavedStats(res.data || null);
+      } catch (_) {
+        // Ignore
       }
     })();
   }, [authLoaded, getToken, user]);
@@ -193,23 +210,20 @@ const Dashboard = () => {
     }
   ];
 
-  const recent = [
-    {
-      title: 'Completed: Arrays — Two pointers',
-      meta: '12 questions • 28m',
-      tone: 'border-cyan-500/30 bg-cyan-500/5'
-    },
-    {
-      title: 'Mock interview session saved',
-      meta: 'Frontend • React • 35m',
-      tone: 'border-violet-500/30 bg-violet-500/5'
-    },
-    {
-      title: 'Answer evaluation generated',
-      meta: 'Behavioral • STAR format',
-      tone: 'border-pink-500/30 bg-pink-500/5'
-    }
-  ];
+  const recent = useMemo(() => {
+    const items = Array.isArray(savedStats?.recent) ? savedStats.recent : [];
+    if (!items.length) return [];
+    return items.map((q) => {
+      const topic = (Array.isArray(q.topics) && q.topics[0]) || q.topic || 'General';
+      const diff = q.difficulty || '';
+      const role = q.role || '';
+      return {
+        title: `Saved question: ${topic}`,
+        meta: `${role || 'Role'}${diff ? ` • ${diff}` : ''}`,
+        tone: 'border-emerald-500/30 bg-emerald-500/5'
+      };
+    });
+  }, [savedStats]);
 
   const today = [
     { label: 'Generate: 10 questions (DSA basics)', Icon: Sparkles },
@@ -298,6 +312,9 @@ const Dashboard = () => {
                     </div>
                     <div className="text-sm text-slate-400 mt-2">
                       Pick up where you left off — or start a new session.
+                    </div>
+                    <div className="text-xs text-slate-500 mt-3">
+                      Saved questions: <span className="font-semibold text-slate-200">{Number(savedStats?.totalSaved) || 0}</span>
                     </div>
                   </div>
 
@@ -456,15 +473,21 @@ const Dashboard = () => {
                     </div>
 
                     <div className="mt-4 space-y-3">
-                      {recent.map((item) => (
-                        <div
-                          key={item.title}
-                          className={`rounded-2xl border px-4 py-3 ${item.tone}`}
-                        >
-                          <div className="text-sm font-medium text-slate-100">{item.title}</div>
-                          <div className="text-xs text-slate-400 mt-1">{item.meta}</div>
+                      {recent.length ? (
+                        recent.map((item) => (
+                          <div
+                            key={item.title}
+                            className={`rounded-2xl border px-4 py-3 ${item.tone}`}
+                          >
+                            <div className="text-sm font-medium text-slate-100">{item.title}</div>
+                            <div className="text-xs text-slate-400 mt-1">{item.meta}</div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-4 text-sm text-slate-400">
+                          No saved questions yet.
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 </div>

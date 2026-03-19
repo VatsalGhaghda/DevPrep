@@ -76,4 +76,25 @@ export const clerkAPI = {
     })
 };
 
+export const questionsAPI = {
+  generate: (clerkToken, payload) =>
+    api.post('/questions/generate', payload, {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`
+      }
+    }),
+  save: (clerkToken, payload) =>
+    api.post('/questions/save', payload, {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`
+      }
+    }),
+  getSavedStats: (clerkToken) =>
+    api.get('/questions/saved/stats', {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`
+      }
+    })
+};
+
 export default api;

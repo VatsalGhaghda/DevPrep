@@ -6,23 +6,78 @@ function normalizeTopics(topics) {
     .slice(0, 10);
 }
 
-function generateQuestions(req, res, next) {
-  try {
-    const { role = 'Software Engineer', difficulty = 'medium', topics = [], count = 5 } = req.body;
+const { generateInterviewQuestions } = require('../utils/questionGeneration');
+const { clerkClient } = require('@clerk/clerk-sdk-node');
+const SavedQuestion = require('../models/SavedQuestion');
+const User = require('../models/User');
+const { getClerkUserIdFromAuth, upsertUserFromClerkApi } = require('./clerkSyncController');
 
-    const safeCount = Math.max(1, Math.min(Number(count) || 5, 20));
+function normalizeQuestionKey(q) {
+  return String(q || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 ?.,-]/g, '')
+    .trim();
+}
+
+async function getOrCreateUserFromClerk(req) {
+  const clerkUserId = getClerkUserIdFromAuth(req);
+  if (!clerkUserId) return null;
+
+  let user = await User.findOne({ clerkUserId });
+  if (!user) {
+    const clerkUser = await clerkClient.users.getUser(clerkUserId);
+    user = await upsertUserFromClerkApi(clerkUser);
+  }
+  return user;
+}
+
+async function generateQuestions(req, res, next) {
+  try {
+    const { role = 'Software Engineer', difficulty = 'Medium', topics = [], count = 10, excludeQuestions = [] } = req.body;
+
+    const safeCount = Math.max(1, Math.min(Number(count) || 10, 20));
     const safeTopics = normalizeTopics(topics);
 
-    const questions = Array.from({ length: safeCount }).map((_, idx) => {
-      const topic = safeTopics.length ? safeTopics[idx % safeTopics.length] : '';
+    const user = await getOrCreateUserFromClerk(req);
+    const topicKey = safeTopics.length ? safeTopics[0] : '';
+    const savedExcludes = user
+      ? (
+          await SavedQuestion.find({
+            userId: user._id,
+            role: String(role || '').trim(),
+            difficulty: String(difficulty || '').trim(),
+            ...(topicKey ? { topics: topicKey } : {})
+          })
+            .sort({ createdAt: -1 })
+            .limit(200)
+        ).map((q) => q.question)
+      : [];
 
-      const prefix = topic ? `${topic}: ` : '';
+    const clientExcludes = Array.isArray(excludeQuestions)
+      ? excludeQuestions
+          .map((q) => (typeof q === 'string' ? q.trim() : ''))
+          .filter(Boolean)
+          .slice(0, 200)
+      : [];
 
-      return {
-        text: `${prefix}(${difficulty}) ${role} interview question #${idx + 1}`,
-        topic
-      };
+    const mergedExcludes = [...clientExcludes, ...savedExcludes];
+
+    const items = await generateInterviewQuestions({
+      role,
+      difficulty,
+      topics: safeTopics,
+      count: safeCount,
+      excludeQuestions: mergedExcludes
     });
+
+    const questions = items.map((q) => ({
+      text: q.question,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      topic: q.topic,
+      explanation: q.explanation
+    }));
 
     res.status(200).json({ questions });
   } catch (err) {
@@ -30,4 +85,94 @@ function generateQuestions(req, res, next) {
   }
 }
 
-module.exports = { generateQuestions };
+async function saveQuestions(req, res, next) {
+  try {
+    const user = await getOrCreateUserFromClerk(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const { role = '', difficulty = '', topics = [], questions = [] } = req.body;
+    const safeTopics = normalizeTopics(topics);
+    const safeRole = String(role || '').trim();
+    const safeDifficulty = String(difficulty || '').trim();
+
+    const items = Array.isArray(questions) ? questions : [];
+    let saved = 0;
+    let skipped = 0;
+
+    for (const q of items) {
+      const text = q && typeof q.text === 'string' ? q.text.trim() : '';
+      if (!text) {
+        skipped += 1;
+        continue;
+      }
+
+      const questionKey = normalizeQuestionKey(text);
+      if (!questionKey) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        await SavedQuestion.updateOne(
+          { userId: user._id, questionKey },
+          {
+            $setOnInsert: {
+              userId: user._id,
+              role: safeRole,
+              difficulty: safeDifficulty,
+              topics: safeTopics,
+              question: text,
+              questionKey,
+              options: Array.isArray(q.options) ? q.options : [],
+              correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : 0,
+              topic: typeof q.topic === 'string' ? q.topic.trim() : '',
+              explanation: typeof q.explanation === 'string' ? q.explanation.trim() : ''
+            }
+          },
+          { upsert: true }
+        );
+        saved += 1;
+      } catch (_) {
+        skipped += 1;
+      }
+    }
+
+    return res.status(200).json({ saved, skipped });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function getSavedStats(req, res, next) {
+  try {
+    const user = await getOrCreateUserFromClerk(req);
+    if (!user) {
+      return res.status(401).json({ message: 'Not authorized' });
+    }
+
+    const totalSaved = await SavedQuestion.countDocuments({ userId: user._id });
+    const recent = await SavedQuestion.find({ userId: user._id })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('role difficulty topics topic question createdAt');
+
+    return res.status(200).json({
+      totalSaved,
+      recent: recent.map((q) => ({
+        id: q._id,
+        role: q.role,
+        difficulty: q.difficulty,
+        topics: q.topics,
+        topic: q.topic,
+        question: q.question,
+        createdAt: q.createdAt
+      }))
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { generateQuestions, saveQuestions, getSavedStats };

@@ -3,9 +3,9 @@ node_modules/
 **/node_modules/
 
 # Environment variables / secrets
-.env
-.env.*
-!.env.example
+# .env
+# .env.*
+# !.env.example
 
 # Logs
 npm-debug.log*
@@ -37,4 +37,4 @@ backend/uploads/
 *.seed
 *.tgz
 
-*.md 
+# *.md 

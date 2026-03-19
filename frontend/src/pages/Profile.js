@@ -22,7 +22,7 @@ import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import { clerkAPI } from '../services/api';
+import { clerkAPI, questionsAPI } from '../services/api';
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -34,6 +34,7 @@ const Profile = () => {
   const [dbProfile, setDbProfile] = useState(null);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [savedStats, setSavedStats] = useState(null);
 
   const knownRoutes = useMemo(
     () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate']),
@@ -83,6 +84,22 @@ const Profile = () => {
         setDbProfile(res.data?.user || null);
       } catch (_) {
         // Ignore: we can fall back to Clerk-only display
+      }
+    })();
+  }, [authLoaded, getToken, user]);
+
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!user) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await questionsAPI.getSavedStats(token);
+        setSavedStats(res.data || null);
+      } catch (_) {
+        // Ignore
       }
     })();
   }, [authLoaded, getToken, user]);
@@ -322,7 +339,7 @@ const Profile = () => {
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Questions</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">0</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(savedStats?.totalSaved) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Mock sessions</div>

@@ -19,6 +19,9 @@ function errorHandler(err, req, res, next) {
 
   if (process.env.NODE_ENV === 'development') {
     payload.stack = err && err.stack ? err.stack : undefined;
+    if (err && err.body && !payload.details) {
+      payload.details = err.body;
+    }
   }
 
   const finalStatus =
