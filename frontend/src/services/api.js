@@ -97,4 +97,27 @@ export const questionsAPI = {
     })
 };
 
+export const mockInterviewAPI = {
+  start: (clerkToken, payload) =>
+    api.post('/mock-interviews/start', payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  getSession: (clerkToken, sessionId) =>
+    api.get(`/mock-interviews/${sessionId}`, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  sendMessage: (clerkToken, sessionId, content) =>
+    api.post(`/mock-interviews/${sessionId}/message`, { content }, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  endSession: (clerkToken, sessionId, status = 'completed') =>
+    api.post(`/mock-interviews/${sessionId}/end`, { status }, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  getHistory: (clerkToken) =>
+    api.get('/mock-interviews/history', {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    })
+};
+
 export default api;

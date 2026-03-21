@@ -82,7 +82,7 @@ const ProfileEdit = () => {
     'User';
 
   const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate']),
+    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate', '/interview/mock']),
     []
   );
 

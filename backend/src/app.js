@@ -16,6 +16,7 @@ const codingRoutes = require('./routes/codingRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const clerkRoutes = require('./routes/clerkRoutes');
+const mockInterviewRoutes = require('./routes/mockInterviewRoutes');
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use('/api/coding', codingRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/clerk', clerkRoutes);
+app.use('/api/mock-interviews', mockInterviewRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

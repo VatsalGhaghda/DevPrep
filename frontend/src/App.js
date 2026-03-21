@@ -11,6 +11,8 @@ import OAuthSuccess from './pages/OAuthSuccess';
 import Profile from './pages/Profile';
 import ProfileEdit from './pages/ProfileEdit';
 import QuestionGenerator from './pages/QuestionGenerator';
+import MockInterviewSetup from './pages/MockInterviewSetup';
+import MockInterviewSession from './pages/MockInterviewSession';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -64,6 +66,22 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <QuestionGenerator />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/interview/mock" 
+                element={
+                  <ProtectedRoute>
+                    <MockInterviewSetup />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/interview/mock/:sessionId" 
+                element={
+                  <ProtectedRoute>
+                    <MockInterviewSession />
                   </ProtectedRoute>
                 } 
               />
