@@ -20,8 +20,8 @@ router.post(
   '/start',
   [
     body('interviewType')
-      .isIn(['technical', 'hr', 'mixed'])
-      .withMessage('Interview type must be technical, hr, or mixed'),
+      .isIn(['technical', 'hr', 'mixed', 'resume-based'])
+      .withMessage('Interview type must be technical, hr, mixed, or resume-based'),
     body('role').optional().isString().trim().isLength({ max: 100 })
       .withMessage('Role must be a string (max 100 chars)'),
     body('difficulty').optional().isIn(['easy', 'medium', 'hard'])
@@ -29,7 +29,9 @@ router.post(
     body('duration').optional().isInt().isIn([15, 30, 45, 60])
       .withMessage('Duration must be 15, 30, 45, or 60'),
     body('selectedTopics').optional().isArray()
-      .withMessage('Selected topics must be an array')
+      .withMessage('Selected topics must be an array'),
+    body('resumeId').optional().isMongoId()
+      .withMessage('Resume ID must be a valid ID')
   ],
   validateRequest,
   startSession

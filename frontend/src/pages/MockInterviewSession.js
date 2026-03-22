@@ -5,12 +5,10 @@ import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  FileUp,
   FileText,
   Code2,
   PlayCircle,
-  Sparkles,
-  ClipboardCheck,
+  Brain,
   User as UserIcon,
   Send,
   Square,
@@ -35,7 +33,7 @@ const MockInterviewSession = () => {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { user } = useUser();
-  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -84,10 +82,8 @@ const MockInterviewSession = () => {
   const sidebarItems = useMemo(() => [
     { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
     { label: 'Profile', path: '/profile', Icon: UserIcon },
-    { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
+    { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
     { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-    { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
-    { label: 'Resume Upload', path: '/resume/upload', Icon: FileUp },
     { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
     { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
   ], []);
@@ -96,7 +92,7 @@ const MockInterviewSession = () => {
     { label: 'Dashboard', path: '/dashboard' },
     { label: 'Questions', path: '/questions/generate' },
     { label: 'Mock', path: '/interview/mock' },
-    { label: 'Evaluate', path: '/evaluate' },
+    { label: 'Resume', path: '/interview/resume' },
     { label: 'Coding', path: '/coding/practice' }
   ], []);
 
@@ -106,7 +102,7 @@ const MockInterviewSession = () => {
 
   // Fetch profile
   useEffect(() => {
-    if (!authLoaded || !user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
     (async () => {
       try {
         const token = await getToken();
@@ -115,11 +111,11 @@ const MockInterviewSession = () => {
         setDbProfile(res.data?.user || null);
       } catch (_) { /* ignore */ }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   // Fetch session
   const fetchSession = useCallback(async () => {
-    if (!authLoaded || !user || !sessionId) return;
+    if (!authLoaded || !isSignedIn || !user || !sessionId) return;
     try {
       const token = await getToken();
       if (!token) { setError('Not authenticated'); setLoading(false); return; }
@@ -131,7 +127,7 @@ const MockInterviewSession = () => {
       setError(msg);
     }
     setLoading(false);
-  }, [authLoaded, user, sessionId, getToken]);
+  }, [authLoaded, isSignedIn, user, sessionId, getToken]);
 
   useEffect(() => { fetchSession(); }, [fetchSession]);
 

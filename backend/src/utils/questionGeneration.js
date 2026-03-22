@@ -304,10 +304,6 @@ function parseQuestionsFromModelOutput(raw) {
     .map(({ _valid, ...rest }) => rest);
 }
 
-function isGeminiEnabled() {
-  return Boolean(process.env.GEMINI_API_KEY && String(process.env.GEMINI_API_KEY).trim());
-}
-
 function getRetryDelayMsFromError(err) {
   const msg = String(err && err.message ? err.message : '');
   const m = msg.match(/retry in\s*([0-9]+(?:\.[0-9]+)?)s/i);
@@ -419,25 +415,22 @@ async function generateInterviewQuestions({ role, difficulty, topics, count, exc
     all.splice(0, all.length, ...merged);
   };
 
-  // Gemini quotas are often request-based; prefer fewer larger calls.
-  const gemini = isGeminiEnabled();
-  // We may need multiple short calls to reliably get exactly safeCount valid MCQs.
-  const maxCalls = gemini ? 2 : 6;
+  // We may need multiple calls to reliably get exactly safeCount valid MCQs.
+  // With Groq, prefer fewer, larger calls to reduce latency.
+  const maxCalls = 3;
   for (let call = 1; call <= maxCalls; call += 1) {
     const remaining = safeCount - all.length;
     if (remaining <= 0) break;
 
-    // Gemini: generate everything in one shot to reduce request counts.
-    // HF: smaller batches reduce malformed output risk.
-    const batchSize = gemini ? remaining : Math.min(5, remaining);
+    const batchSize = remaining;
     try {
       await attemptOnce({
         remaining: batchSize,
         params: {
           ...parameters,
-          max_new_tokens: gemini ? Math.min(2200, 280 + batchSize * 160) : Math.min(420, 140 + batchSize * 70)
+          max_new_tokens: Math.min(2400, 320 + batchSize * 170)
         },
-        timeoutMs: gemini ? 65000 : 25000
+        timeoutMs: 65000
       });
     } catch (err) {
       lastErr = err;

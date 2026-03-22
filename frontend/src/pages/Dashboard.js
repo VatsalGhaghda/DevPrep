@@ -5,13 +5,11 @@ import { toast } from 'sonner';
 import { useAuth, useUser, useClerk } from '@clerk/clerk-react';
 import {
   LayoutDashboard,
-  FileUp,
   FileText,
   Code2,
   PlayCircle,
   BookOpen,
-  Sparkles,
-  ClipboardCheck,
+  Brain,
   ChevronRight,
   User
 } from 'lucide-react';
@@ -25,7 +23,7 @@ import { clerkAPI, questionsAPI } from '../services/api';
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useUser();
-  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -36,8 +34,7 @@ const Dashboard = () => {
   const didSyncRef = useRef(false);
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
     if (didSyncRef.current) return;
 
     didSyncRef.current = true;
@@ -51,11 +48,10 @@ const Dashboard = () => {
         // Intentionally ignore: webhooks may still cover this; don't spam users with errors
       }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
 
     (async () => {
       try {
@@ -67,11 +63,10 @@ const Dashboard = () => {
         // Ignore
       }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
 
     (async () => {
       try {
@@ -83,7 +78,7 @@ const Dashboard = () => {
         // Ignore
       }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   const displayName =
     user?.fullName ||
@@ -92,7 +87,7 @@ const Dashboard = () => {
     (dbProfile && dbProfile.name) ||
     'User';
 
-  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock']), []);
+  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock', '/interview/resume']), []);
 
   const handleLogout = async () => {
     if (logoutLoading) return;
@@ -124,7 +119,7 @@ const Dashboard = () => {
     {
       title: 'Question Generator',
       desc: 'Create practice sets by topic',
-      Icon: Sparkles,
+      Icon: Brain,
       gradient: 'from-cyan-600/25 to-violet-600/10',
       path: '/questions/generate'
     },
@@ -136,21 +131,7 @@ const Dashboard = () => {
       path: '/interview/mock'
     },
     {
-      title: 'Answer Evaluation',
-      desc: 'Get feedback on your answers',
-      Icon: ClipboardCheck,
-      gradient: 'from-pink-600/25 to-violet-600/10',
-      path: '/evaluate'
-    },
-    {
-      title: 'Resume Upload',
-      desc: 'Upload to personalize interviews',
-      Icon: FileUp,
-      gradient: 'from-indigo-600/25 to-cyan-600/10',
-      path: '/resume/upload'
-    },
-    {
-      title: 'Resume-Based Interview',
+      title: 'Resume Interview',
       desc: 'Interview based on your resume',
       Icon: FileText,
       gradient: 'from-cyan-600/25 to-indigo-600/10',
@@ -169,7 +150,7 @@ const Dashboard = () => {
     {
       title: 'Generate Questions',
       desc: 'AI-curated practice set',
-      Icon: Sparkles,
+      Icon: Brain,
       gradient: 'from-cyan-600/25 to-violet-600/10',
       path: '/questions/generate'
     },
@@ -179,20 +160,6 @@ const Dashboard = () => {
       Icon: PlayCircle,
       gradient: 'from-violet-600/25 to-indigo-600/10',
       path: '/interview/mock'
-    },
-    {
-      title: 'Evaluate Answer',
-      desc: 'Structure + improvement tips',
-      Icon: ClipboardCheck,
-      gradient: 'from-pink-600/25 to-violet-600/10',
-      path: '/evaluate'
-    },
-    {
-      title: 'Upload Resume',
-      desc: 'Resume-based questions',
-      Icon: FileUp,
-      gradient: 'from-indigo-600/25 to-cyan-600/10',
-      path: '/resume/upload'
     },
     {
       title: 'Resume Interview',
@@ -226,10 +193,9 @@ const Dashboard = () => {
   }, [savedStats]);
 
   const today = [
-    { label: 'Generate: 10 questions (DSA basics)', Icon: Sparkles },
+    { label: 'Generate: 10 questions (DSA basics)', Icon: Brain },
     { label: 'Mock interview: 1 session', Icon: PlayCircle },
-    { label: 'Upload resume for resume interview', Icon: FileUp },
-    { label: 'Evaluate 1 answer to improve structure', Icon: ClipboardCheck },
+    { label: 'Resume interview: personalized prep', Icon: FileText },
     { label: 'Coding practice: 20 min patterns', Icon: BookOpen }
   ];
 
@@ -237,10 +203,8 @@ const Dashboard = () => {
     () => [
       { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
       { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
+      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
       { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
-      { label: 'Resume Upload', path: '/resume/upload', Icon: FileUp },
       { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
       { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
     ],
@@ -252,7 +216,7 @@ const Dashboard = () => {
       { label: 'Dashboard', path: '/dashboard' },
       { label: 'Questions', path: '/questions/generate' },
       { label: 'Mock', path: '/interview/mock' },
-      { label: 'Evaluate', path: '/evaluate' },
+      { label: 'Resume', path: '/interview/resume' },
       { label: 'Coding', path: '/coding/practice' }
     ],
     []

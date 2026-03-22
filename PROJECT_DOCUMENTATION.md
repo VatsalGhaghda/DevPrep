@@ -7,7 +7,7 @@ Frontend (React – Vercel)
         ↓
 Backend API (Node.js – Render)
         ↓
-AI Layer (Hugging Face Inference API)
+AI Layer (Groq LLM API)
         ↓
 Database (MongoDB Atlas)
 ```
@@ -43,15 +43,15 @@ Database (MongoDB Atlas)
 ### ⚙️ How It Works
 
 ```
-Signup → Password Hash → JWT
-JWT → Protected APIs → Dashboard
+Clerk Authentication → JWT-like session token
+Token → Protected APIs → Dashboard
 ```
 
 ### 🛠️ Tech Stack
 
 - **Frontend:** React + Tailwind CSS
 - **Backend:** Node.js + Express.js
-- **Auth:** JWT + bcrypt
+- **Auth:** Clerk
 - **DB:** MongoDB Atlas
 
 ### 🧠 Why This Stack
@@ -67,32 +67,37 @@ JWT → Protected APIs → Dashboard
 
 ### 🎯 Feature Description
 
-Generates interview questions based on:
+Generates MCQ interview questions based on:
 - Job role
 - Difficulty level
-- Topic
+- Topic(s)
+
+Includes:
+- Full-window interactive quiz UI
+- Save Questions (persist to MongoDB)
+- PDF download of the generated question set
+- No-repeat across future generations (excludes previously saved questions)
 
 ### ⚙️ Flow
 
 ```
-Role + Level → Prompt → AI → Questions
+Role + Difficulty + Topic(s) + Count → Prompt → Groq → MCQ JSON → Quiz UI → Save + PDF
 ```
 
 ### 🧠 AI Model Used
 
-- **Model:** Mistral-7B-Instruct
-- **Platform:** Hugging Face Inference API
+- **Platform:** Groq LLM API
+- **Model:** llama-3.3-70b-versatile
 
 ### 🛠️ Tech Stack
 
 - **Backend:** Node.js
-- **AI SDK:** @huggingface/inference
+- **AI Provider:** Groq (OpenAI-compatible Chat Completions API)
 
-### ✅ Why Mistral-7B
+### ✅ Why Groq
 
-- Instruction-tuned
-- High-quality technical questions
-- Stable on free tier
+- Fast responses and consistent JSON generation with proper prompting
+- Simple OpenAI-compatible API surface
 
 ---
 
@@ -112,8 +117,8 @@ Previous Q&A → Context Prompt → Next Question
 
 ### 🧠 AI Model Used
 
-- **Model:** Zephyr-7B
-- Optimized for conversational flow
+- **Platform:** Groq LLM API
+- **Model:** llama-3.3-70b-versatile
 
 ### 🛠️ Tech Stack
 
@@ -298,20 +303,17 @@ Answer → STAR Prompt → Feedback
 - **Frontend:** React + Tailwind CSS (Vercel)
 - **Backend:** Node.js + Express (Render)
 - **Database:** MongoDB Atlas (Free)
-- **AI Platform:** Hugging Face Inference API
-- **AI Models:**
-  - Mistral-7B-Instruct (Questions, Resume)
-  - Zephyr-7B (Mock & HR Interview)
-  - Flan-T5-XL (Evaluation & Scoring)
+- **AI Platform:** Groq LLM API
+- **AI Model:** llama-3.3-70b-versatile
 - **Editor:** Monaco Editor
 - **Charts:** Chart.js
-- **Auth:** JWT
+- **Auth:** Clerk
 
 ---
 
 ## 🧾 Final Resume One-Liner (Use This 🔥)
 
-> **Developed and deployed a cloud-hosted AI-powered interview preparation platform using open-source LLMs via Hugging Face Inference API, enabling mock interviews, answer evaluation, coding practice, and analytics.**
+> **Developed and deployed a cloud-hosted AI-powered interview preparation platform using Groq LLM API, enabling MCQ quiz generation with save + PDF export, and realistic mock interview simulations.**
 
 ---
 

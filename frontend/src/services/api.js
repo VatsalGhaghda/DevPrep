@@ -120,4 +120,22 @@ export const mockInterviewAPI = {
     })
 };
 
+export const resumeAPI = {
+  upload: (clerkToken, formData) =>
+    api.post('/resume/upload', formData, {
+      headers: {
+        Authorization: `Bearer ${clerkToken}`,
+        'Content-Type': 'multipart/form-data'
+      }
+    }),
+  getResume: (clerkToken) =>
+    api.get('/resume', {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  deleteResume: (clerkToken, id) =>
+    api.delete(`/resume/${id}`, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    })
+};
+
 export default api;

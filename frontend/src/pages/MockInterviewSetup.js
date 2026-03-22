@@ -5,12 +5,10 @@ import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  FileUp,
   FileText,
   Code2,
   PlayCircle,
-  Sparkles,
-  ClipboardCheck,
+  Brain,
   User,
   ChevronDown,
   Clock,
@@ -60,7 +58,7 @@ const TOPICS_MAP = {
 const MockInterviewSetup = () => {
   const navigate = useNavigate();
   const { user } = useUser();
-  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -128,10 +126,8 @@ const MockInterviewSetup = () => {
     () => [
       { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
       { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
+      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
       { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
-      { label: 'Resume Upload', path: '/resume/upload', Icon: FileUp },
       { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
       { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
     ],
@@ -143,7 +139,7 @@ const MockInterviewSetup = () => {
       { label: 'Dashboard', path: '/dashboard' },
       { label: 'Questions', path: '/questions/generate' },
       { label: 'Mock', path: '/interview/mock' },
-      { label: 'Evaluate', path: '/evaluate' },
+      { label: 'Resume', path: '/interview/resume' },
       { label: 'Coding', path: '/coding/practice' }
     ],
     []
@@ -172,7 +168,7 @@ const MockInterviewSetup = () => {
 
   // Fetch profile
   useEffect(() => {
-    if (!authLoaded || !user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
     (async () => {
       try {
         const token = await getToken();
@@ -181,11 +177,11 @@ const MockInterviewSetup = () => {
         setDbProfile(res.data?.user || null);
       } catch (_) { /* ignore */ }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   // Fetch history
   useEffect(() => {
-    if (!authLoaded || !user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
     (async () => {
       try {
         const token = await getToken();
@@ -195,7 +191,7 @@ const MockInterviewSetup = () => {
       } catch (_) { /* ignore */ }
       setHistoryLoading(false);
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   // Close role dropdown on outside click
   useEffect(() => {
@@ -292,16 +288,6 @@ const MockInterviewSetup = () => {
                 transition={{ duration: 0.6 }}
                 className="mt-6"
               >
-                {/* Page header */}
-                <div className="mb-6">
-                  <h1 className="text-2xl lg:text-3xl font-bold bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 bg-clip-text text-transparent">
-                    Mock Interview
-                  </h1>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Practice with an AI interviewer tailored to your target role
-                  </p>
-                </div>
-
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Setup form */}
                   <div className="lg:col-span-2">

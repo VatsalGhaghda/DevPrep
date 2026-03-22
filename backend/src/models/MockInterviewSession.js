@@ -56,7 +56,7 @@ const mockInterviewSessionSchema = new mongoose.Schema(
     interviewType: {
       type: String,
       required: true,
-      enum: ['technical', 'hr', 'mixed']
+      enum: ['technical', 'hr', 'mixed', 'resume-based']
     },
     role: {
       type: String,
@@ -77,6 +77,17 @@ const mockInterviewSessionSchema = new mongoose.Schema(
     selectedTopics: {
       type: [String],
       default: []
+    },
+    resumeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Resume',
+      default: null
+    },
+    resumeContext: {
+      type: String,
+      trim: true,
+      maxlength: 10000,
+      default: ''
     },
     status: {
       type: String,

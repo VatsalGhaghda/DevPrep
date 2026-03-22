@@ -153,22 +153,38 @@ async function getSavedStats(req, res, next) {
     }
 
     const totalSaved = await SavedQuestion.countDocuments({ userId: user._id });
-    const recent = await SavedQuestion.find({ userId: user._id })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('role difficulty topics topic question createdAt');
+
+    // Group saved questions into "quiz sessions" by role + difficulty + topic
+    const recentQuizzes = await SavedQuestion.aggregate([
+      { $match: { userId: user._id } },
+      {
+        $group: {
+          _id: {
+            role: '$role',
+            difficulty: '$difficulty',
+            topic: { $arrayElemAt: ['$topics', 0] }
+          },
+          count: { $sum: 1 },
+          lastSavedAt: { $max: '$createdAt' }
+        }
+      },
+      { $sort: { lastSavedAt: -1 } },
+      { $limit: 10 },
+      {
+        $project: {
+          _id: 0,
+          role: '$_id.role',
+          difficulty: '$_id.difficulty',
+          topic: '$_id.topic',
+          count: 1,
+          lastSavedAt: 1
+        }
+      }
+    ]);
 
     return res.status(200).json({
       totalSaved,
-      recent: recent.map((q) => ({
-        id: q._id,
-        role: q.role,
-        difficulty: q.difficulty,
-        topics: q.topics,
-        topic: q.topic,
-        question: q.question,
-        createdAt: q.createdAt
-      }))
+      recentQuizzes
     });
   } catch (err) {
     return next(err);

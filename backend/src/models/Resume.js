@@ -68,9 +68,18 @@ const resumeSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000
     },
+    rawText: {
+      type: String,
+      default: ''
+    },
     extractedData: {
       type: extractedDataSchema,
       default: () => ({})
+    },
+    extractionStatus: {
+      type: String,
+      enum: ['pending', 'success', 'failed'],
+      default: 'pending'
     },
     uploadDate: {
       type: Date,

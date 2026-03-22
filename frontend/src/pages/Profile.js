@@ -5,12 +5,10 @@ import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  FileUp,
   FileText,
   Code2,
   PlayCircle,
-  Sparkles,
-  ClipboardCheck,
+  Brain,
   User,
   Shield,
   BarChart3,
@@ -27,7 +25,7 @@ import { clerkAPI, questionsAPI } from '../services/api';
 const Profile = () => {
   const navigate = useNavigate();
   const { user } = useUser();
-  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -73,8 +71,7 @@ const Profile = () => {
   const email = user?.primaryEmailAddress?.emailAddress || '';
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
 
     (async () => {
       try {
@@ -86,11 +83,10 @@ const Profile = () => {
         // Ignore: we can fall back to Clerk-only display
       }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
 
     (async () => {
       try {
@@ -102,7 +98,7 @@ const Profile = () => {
         // Ignore
       }
     })();
-  }, [authLoaded, getToken, user]);
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   const profileData = useMemo(() => {
     const md = user?.publicMetadata || {};
@@ -126,10 +122,8 @@ const Profile = () => {
     () => [
       { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
       { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
+      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
       { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
-      { label: 'Resume Upload', path: '/resume/upload', Icon: FileUp },
       { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
       { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
     ],
@@ -141,7 +135,7 @@ const Profile = () => {
       { label: 'Dashboard', path: '/dashboard' },
       { label: 'Questions', path: '/questions/generate' },
       { label: 'Mock', path: '/interview/mock' },
-      { label: 'Evaluate', path: '/evaluate' },
+      { label: 'Resume', path: '/interview/resume' },
       { label: 'Coding', path: '/coding/practice' }
     ],
     []

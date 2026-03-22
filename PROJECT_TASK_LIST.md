@@ -230,6 +230,10 @@
 - [ ] Upcoming scheduled interviews (if applicable)
 - [ ] Responsive grid layout
 
+Implementation notes:
+- [x] Show saved questions count (from backend stats endpoint)
+- [x] Show recent saved questions activity
+
 #### Task 2.4.2: Profile Page (`/profile`)
 - [ ] Profile header with avatar
 - [ ] Personal information display:
@@ -240,6 +244,9 @@
 - [ ] Edit profile button
 - [ ] Account settings section
 - [ ] Statistics summary
+
+Implementation notes:
+- [x] Show saved questions count (from backend stats endpoint)
 
 #### Task 2.4.3: Edit Profile Page (`/profile/edit`)
 - [ ] Profile picture upload
@@ -285,7 +292,14 @@
   - Copy to clipboard button
   - Save questions option
 - [ ] Export options (PDF, JSON)
-- [ ] Regenerate button
+
+Implementation notes:
+- [x] Interactive full-window MCQ quiz UI
+- [x] Save questions to MongoDB
+- [x] Download PDF on save
+- [x] Avoid repeats across future generations
+- [x] Review mode (correct/incorrect)
+- [x] Removed regenerate flow
 
 ---
 
@@ -302,6 +316,9 @@
 - [ ] Topic preferences
 - [ ] Start interview button
 - [ ] Interview history preview
+
+Implementation notes:
+- [x] Implemented Groq-based mock interview workflow
 
 #### Task 2.6.2: Mock Interview Session Page (`/interview/mock/:sessionId`)
 - [ ] Interview header:
@@ -900,9 +917,9 @@
 ### Phase 5.1: Question Generator
 
 #### Task 5.1.1: AI Integration Setup
-- [ ] Set up Hugging Face API client
-- [ ] Configure API key
-- [ ] Create AI service utility
+- [x] Set up Groq API client
+- [x] Configure API key
+- [x] Create AI service utility
 
 #### Task 5.1.2: Question Generation Logic
 - [ ] Create prompt templates for Mistral-7B
@@ -913,11 +930,15 @@
 - [ ] Handle API errors
 
 #### Task 5.1.3: Backend Endpoint
-- [ ] Create question generation endpoint
+- [x] Create question generation endpoint
 - [ ] Validate input parameters
 - [ ] Call AI service
 - [ ] Return formatted questions
 - [ ] Add rate limiting (optional)
+
+Additional endpoints:
+- [x] POST `/api/questions/save` (save MCQ set)
+- [x] GET `/api/questions/saved/stats` (saved count + recent)
 
 ---
 
@@ -930,7 +951,7 @@
 - [ ] End session and calculate summary
 
 #### Task 5.2.2: AI Conversation Flow
-- [ ] Set up Zephyr-7B for conversations
+- [x] Set up Groq for conversations
 - [ ] Create context-aware prompts
 - [ ] Maintain conversation history
 - [ ] Generate follow-up questions
@@ -1041,25 +1062,19 @@
 
 ## 🧠 Phase 6: AI Integration
 
-### Phase 6.1: Hugging Face API Setup
+### Phase 6.1: Groq API Setup
 
 #### Task 6.1.1: API Configuration
-- [ ] Create Hugging Face account
-- [ ] Generate API token
-- [ ] Set up API client
+- [x] Create Groq account
+- [x] Generate API key
+- [x] Set up API client
 - [ ] Configure rate limits
 - [ ] Set up error handling
 
 #### Task 6.1.2: Model Integration
-- [ ] Integrate Mistral-7B-Instruct
-  - Question generation
-  - Resume processing
-- [ ] Integrate Zephyr-7B
+- [x] Integrate llama-3.3-70b-versatile
+  - Question generation (MCQ)
   - Mock interviews
-  - HR interviews
-- [ ] Integrate Flan-T5-XL
-  - Answer evaluation
-  - Scoring
 
 #### Task 6.1.3: Prompt Engineering
 - [ ] Design effective prompts for each use case

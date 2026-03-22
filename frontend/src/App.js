@@ -13,6 +13,7 @@ import ProfileEdit from './pages/ProfileEdit';
 import QuestionGenerator from './pages/QuestionGenerator';
 import MockInterviewSetup from './pages/MockInterviewSetup';
 import MockInterviewSession from './pages/MockInterviewSession';
+import ResumeInterview from './pages/ResumeInterview';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -82,6 +83,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <MockInterviewSession />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/interview/resume" 
+                element={
+                  <ProtectedRoute>
+                    <ResumeInterview />
                   </ProtectedRoute>
                 } 
               />

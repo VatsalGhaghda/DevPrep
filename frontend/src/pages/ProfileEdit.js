@@ -5,12 +5,10 @@ import { useAuth, useClerk, useUser } from '@clerk/clerk-react';
 import { toast } from 'sonner';
 import {
   LayoutDashboard,
-  FileUp,
   FileText,
   Code2,
   PlayCircle,
-  Sparkles,
-  ClipboardCheck,
+  Brain,
   User,
   Image as ImageIcon,
   Save,
@@ -54,7 +52,7 @@ function normalizeSkills(input) {
 const ProfileEdit = () => {
   const navigate = useNavigate();
   const { user } = useUser();
-  const { getToken, isLoaded: authLoaded } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -114,10 +112,8 @@ const ProfileEdit = () => {
     () => [
       { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
       { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Sparkles },
+      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
       { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Answer Evaluation', path: '/evaluate', Icon: ClipboardCheck },
-      { label: 'Resume Upload', path: '/resume/upload', Icon: FileUp },
       { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
       { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
     ],
@@ -129,15 +125,14 @@ const ProfileEdit = () => {
       { label: 'Dashboard', path: '/dashboard' },
       { label: 'Questions', path: '/questions/generate' },
       { label: 'Mock', path: '/interview/mock' },
-      { label: 'Evaluate', path: '/evaluate' },
+      { label: 'Resume', path: '/interview/resume' },
       { label: 'Coding', path: '/coding/practice' }
     ],
     []
   );
 
   useEffect(() => {
-    if (!authLoaded) return;
-    if (!user) return;
+    if (!authLoaded || !isSignedIn || !user) return;
 
     (async () => {
       setLoading(true);
@@ -170,7 +165,7 @@ const ProfileEdit = () => {
         setLoading(false);
       }
     })();
-  }, [authLoaded, displayNameFallback, getToken, user]);
+  }, [authLoaded, isSignedIn, displayNameFallback, getToken, user]);
 
   const validationErrors = useMemo(() => {
     const errors = {};

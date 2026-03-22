@@ -5,11 +5,9 @@ const express = require('express');
 const multer = require('multer');
 const { param } = require('express-validator');
 
-const { protect } = require('../middleware/auth');
-const { requireOwnership } = require('../middleware/ownership');
+const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
 const { uploadResume, getResume, deleteResume } = require('../controllers/resumeController');
-const Resume = require('../models/Resume');
 
 const router = express.Router();
 
@@ -39,14 +37,14 @@ const upload = multer({
   }
 });
 
-router.post('/upload', protect, upload.single('file'), uploadResume);
-router.get('/', protect, getResume);
+// Apply auth per-route (same pattern as questionRoutes) to avoid conflicts with multer
+router.post('/upload', clerkAuthMiddleware(), upload.single('file'), uploadResume);
+router.get('/', clerkAuthMiddleware(), getResume);
 router.delete(
   '/:id',
-  protect,
+  clerkAuthMiddleware(),
   [param('id').isMongoId().withMessage('Invalid id')],
   validateRequest,
-  requireOwnership({ Model: Resume, param: 'id', ownerField: 'userId' }),
   deleteResume
 );
 

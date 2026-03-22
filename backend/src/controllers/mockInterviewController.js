@@ -1,6 +1,7 @@
 const { clerkClient } = require('@clerk/clerk-sdk-node');
 
 const MockInterviewSession = require('../models/MockInterviewSession');
+const Resume = require('../models/Resume');
 const User = require('../models/User');
 const {
   upsertUserFromClerkApi,
@@ -29,7 +30,7 @@ function getGroqApiKey() {
 }
 
 function getGroqModel() {
-  const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
   return String(model).trim();
 }
 
@@ -82,13 +83,14 @@ async function groqChat(messages, { temperature = 0.7, maxTokens = 2048, timeout
 function buildSystemPrompt(session) {
   const typeLabel = session.interviewType === 'technical' ? 'Technical'
     : session.interviewType === 'hr' ? 'HR / Behavioral'
+    : session.interviewType === 'resume-based' ? 'Resume-Based'
     : 'Mixed (Technical + HR)';
 
   const topicsStr = session.selectedTopics.length
     ? session.selectedTopics.join(', ')
     : 'general topics relevant to the role';
 
-  return `You are a professional mock interviewer conducting a real ${typeLabel} interview simulation.
+  const base = `You are a professional mock interviewer conducting a real ${typeLabel} interview simulation.
 
 Candidate details:
 - Target role: ${session.role || 'Software Developer'}
@@ -144,6 +146,13 @@ TONE:
 - Keep responses concise — speak naturally as a real interviewer would in a conversation.
 - Keep the interview interactive. Never break the flow by giving long explanations.
 - Always maintain interviewer role under all circumstances.`;
+
+  // Inject resume context if available
+  if (session.resumeContext) {
+    return base + `\n\nCandidate's Resume Summary:\n${session.resumeContext}\n\nADDITIONAL RESUME-BASED RULES:\n- Ask questions specifically about the candidate's listed projects, experience, and skills.\n- Probe deeper into technologies they claim to know.\n- Ask about challenges faced in their listed projects.\n- Verify their claimed experience with follow-up technical questions.\n- Reference specific items from their resume when asking questions.\n- Mix resume-specific questions with general questions relevant to their target role.`;
+  }
+
+  return base;
 }
 
 function buildEvaluationPrompt(session) {
@@ -192,8 +201,37 @@ async function startSession(req, res, next) {
       role = 'Software Developer',
       difficulty = 'medium',
       duration = 30,
-      selectedTopics = []
+      selectedTopics = [],
+      resumeId = null
     } = req.body;
+
+    // Build resume context if resumeId is provided
+    let resumeContext = '';
+    let resolvedResumeId = null;
+
+    if (resumeId) {
+      try {
+        const resume = await Resume.findById(resumeId);
+        if (resume && String(resume.userId) === String(user._id) && resume.extractionStatus === 'success') {
+          resolvedResumeId = resume._id;
+          const ed = resume.extractedData;
+          const parts = [];
+          if (ed.skills && ed.skills.length) parts.push(`Skills: ${ed.skills.join(', ')}`);
+          if (ed.experience && ed.experience.length) {
+            parts.push('Experience:\n' + ed.experience.map((e) => `- ${e.title}${e.description ? ': ' + e.description : ''}`).join('\n'));
+          }
+          if (ed.projects && ed.projects.length) {
+            parts.push('Projects:\n' + ed.projects.map((p) => `- ${p.title}${p.description ? ': ' + p.description : ''}`).join('\n'));
+          }
+          if (ed.education && ed.education.length) {
+            parts.push('Education:\n' + ed.education.map((e) => `- ${e.title}${e.description ? ': ' + e.description : ''}`).join('\n'));
+          }
+          resumeContext = parts.join('\n\n');
+        }
+      } catch (_) {
+        // Ignore resume lookup failures — proceed without context
+      }
+    }
 
     const session = await MockInterviewSession.create({
       userId: user._id,
@@ -202,6 +240,8 @@ async function startSession(req, res, next) {
       difficulty,
       duration,
       selectedTopics,
+      resumeId: resolvedResumeId,
+      resumeContext,
       status: 'active',
       startedAt: new Date(),
       currentQuestionNumber: 1,
