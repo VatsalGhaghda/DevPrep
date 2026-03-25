@@ -49,6 +49,13 @@ const codingProblemSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200
     },
+    slug: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+      maxlength: 300
+    },
     description: {
       type: String,
       required: true,
@@ -68,6 +75,11 @@ const codingProblemSchema = new mongoose.Schema(
       maxlength: 100,
       index: true
     },
+    tags: {
+      type: [String],
+      default: [],
+      index: true
+    },
     examples: {
       type: [codingExampleSchema],
       default: []
@@ -82,14 +94,55 @@ const codingProblemSchema = new mongoose.Schema(
       maxlength: 20000,
       default: ''
     },
+    inputFormat: {
+      type: String,
+      trim: true,
+      maxlength: 10000,
+      default: ''
+    },
+    outputFormat: {
+      type: String,
+      trim: true,
+      maxlength: 10000,
+      default: ''
+    },
     hints: {
       type: [String],
       default: []
+    },
+    starterCode: {
+      type: Map,
+      of: String,
+      default: {}
     },
     solution: {
       type: String,
       trim: true,
       maxlength: 50000,
+      default: ''
+    },
+    acceptanceRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100
+    },
+    totalSubmissions: {
+      type: Number,
+      default: 0
+    },
+    totalAccepted: {
+      type: Number,
+      default: 0
+    },
+    source: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    sourceId: {
+      type: String,
+      trim: true,
       default: ''
     }
   },
@@ -97,6 +150,8 @@ const codingProblemSchema = new mongoose.Schema(
 );
 
 codingProblemSchema.index({ difficulty: 1, category: 1, createdAt: -1 });
+codingProblemSchema.index({ source: 1, sourceId: 1 }, { unique: true, sparse: true });
+codingProblemSchema.index({ title: 'text', tags: 'text' });
 
 const CodingProblem =
   mongoose.models.CodingProblem ||

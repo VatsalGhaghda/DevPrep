@@ -14,6 +14,8 @@ import QuestionGenerator from './pages/QuestionGenerator';
 import MockInterviewSetup from './pages/MockInterviewSetup';
 import MockInterviewSession from './pages/MockInterviewSession';
 import ResumeInterview from './pages/ResumeInterview';
+import CodingPractice from './pages/CodingPractice';
+import CodingChallenge from './pages/CodingChallenge';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -91,6 +93,22 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <ResumeInterview />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/coding/practice" 
+                element={
+                  <ProtectedRoute>
+                    <CodingPractice />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/coding/challenge/:id" 
+                element={
+                  <ProtectedRoute>
+                    <CodingChallenge />
                   </ProtectedRoute>
                 } 
               />

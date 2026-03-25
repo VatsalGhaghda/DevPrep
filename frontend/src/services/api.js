@@ -138,4 +138,43 @@ export const resumeAPI = {
     })
 };
 
+export const codingAPI = {
+  listProblems: (clerkToken, params = {}) =>
+    api.get('/coding/problems', {
+      params,
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  getProblem: (clerkToken, id) =>
+    api.get(`/coding/problems/${id}`, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  runCode: (clerkToken, id, payload) =>
+    api.post(`/coding/problems/${id}/run`, payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  submitSolution: (clerkToken, id, payload) =>
+    api.post(`/coding/problems/${id}/submit`, payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  saveDraft: (clerkToken, id, payload) =>
+    api.post(`/coding/problems/${id}/save-draft`, payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  getStatus: (clerkToken, id) =>
+    api.get(`/coding/problems/${id}/status`, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    })
+};
+
+export const executeAPI = {
+  run: (clerkToken, payload) =>
+    api.post('/execute/run', payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    }),
+  submit: (clerkToken, payload) =>
+    api.post('/execute/submit', payload, {
+      headers: { Authorization: `Bearer ${clerkToken}` }
+    })
+};
+
 export default api;

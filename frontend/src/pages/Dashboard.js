@@ -87,7 +87,7 @@ const Dashboard = () => {
     (dbProfile && dbProfile.name) ||
     'User';
 
-  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock', '/interview/resume']), []);
+  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock', '/interview/resume', '/coding/practice']), []);
 
   const handleLogout = async () => {
     if (logoutLoading) return;
