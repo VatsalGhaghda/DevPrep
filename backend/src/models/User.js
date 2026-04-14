@@ -9,6 +9,16 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       index: true
     },
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 50,
+      unique: true,
+      sparse: true,
+      index: true,
+      default: ''
+    },
     name: {
       type: String,
       required: true,

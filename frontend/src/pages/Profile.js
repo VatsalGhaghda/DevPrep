@@ -20,37 +20,65 @@ import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import { clerkAPI, questionsAPI } from '../services/api';
+import ProfileAnalytics from '../components/ProfileAnalytics';
+import { clerkAPI, questionsAPI, analyticsAPI } from '../services/api';
 
 const Profile = () => {
   const navigate = useNavigate();
   const { user } = useUser();
   const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { signOut } = useClerk();
+
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [dbProfile, setDbProfile] = useState(null);
-  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [logoutLoading, setLogoutLoading] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed]   = useState(false);
+  const [dbProfile, setDbProfile]   = useState(null);
   const [savedStats, setSavedStats] = useState(null);
+  const [interviewStats, setInterviewStats] = useState(null);
+  const [clerkToken, setClerkToken] = useState(null);
+  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const [logoutLoading, setLogoutLoading]         = useState(false);
 
-  const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate', '/interview/mock']),
-    []
-  );
+  const displayName =
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+    user?.username ||
+    'User';
 
-  const safeNavigate = (path) => {
-    if (path === '/logout') {
-      setConfirmLogoutOpen(true);
-      return;
-    }
+  const email = user?.primaryEmailAddress?.emailAddress || '';
 
-    if (!knownRoutes.has(path)) {
-      toast.info('Coming soon');
-      return;
-    }
-    navigate(path);
-  };
+  /* ── Fetch profile + stats on mount ── */
+  useEffect(() => {
+    if (!authLoaded || !isSignedIn || !user) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        // Store token for <ProfileAnalytics />
+        setClerkToken(token);
+
+        // Run all fetches in parallel
+        const [profileRes, savedRes, overviewRes] = await Promise.allSettled([
+          clerkAPI.getProfile(token),
+          questionsAPI.getSavedStats(token),
+          analyticsAPI.getOverview(token)
+        ]);
+
+        if (profileRes.status === 'fulfilled') {
+          setDbProfile(profileRes.value.data?.user || null);
+        }
+        if (savedRes.status === 'fulfilled') {
+          setSavedStats(savedRes.value.data || null);
+        }
+        if (overviewRes.status === 'fulfilled') {
+          setInterviewStats(overviewRes.value.data?.overview || null);
+        }
+      } catch (_) {
+        // Non-fatal – display shows zeros / fallbacks
+      }
+    })();
+  }, [authLoaded, isSignedIn, getToken, user]);
 
   const handleLogout = async () => {
     if (logoutLoading) return;
@@ -63,43 +91,6 @@ const Profile = () => {
     }
   };
 
-  const displayName =
-    user?.fullName ||
-    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
-    user?.username ||
-    'User';
-  const email = user?.primaryEmailAddress?.emailAddress || '';
-
-  useEffect(() => {
-    if (!authLoaded || !isSignedIn || !user) return;
-
-    (async () => {
-      try {
-        const token = await getToken();
-        if (!token) return;
-        const res = await clerkAPI.getProfile(token);
-        setDbProfile(res.data?.user || null);
-      } catch (_) {
-        // Ignore: we can fall back to Clerk-only display
-      }
-    })();
-  }, [authLoaded, isSignedIn, getToken, user]);
-
-  useEffect(() => {
-    if (!authLoaded || !isSignedIn || !user) return;
-
-    (async () => {
-      try {
-        const token = await getToken();
-        if (!token) return;
-        const res = await questionsAPI.getSavedStats(token);
-        setSavedStats(res.data || null);
-      } catch (_) {
-        // Ignore
-      }
-    })();
-  }, [authLoaded, isSignedIn, getToken, user]);
-
   const profileData = useMemo(() => {
     const md = user?.publicMetadata || {};
     const experienceLevel =
@@ -111,35 +102,28 @@ const Profile = () => {
     const skills =
       (dbProfile && Array.isArray(dbProfile.skills) ? dbProfile.skills : null) ||
       (Array.isArray(md.skills) ? md.skills.filter((s) => typeof s === 'string') : ['React', 'JavaScript', 'DSA']);
-
-    const bio = (dbProfile && typeof dbProfile.bio === 'string' ? dbProfile.bio : '') || '';
+    const bio    = (dbProfile && typeof dbProfile.bio    === 'string' ? dbProfile.bio    : '') || '';
     const avatar = (dbProfile && typeof dbProfile.avatar === 'string' ? dbProfile.avatar : '') || '';
 
     return { experienceLevel, targetRole, skills: skills.slice(0, 12), bio, avatar };
   }, [dbProfile, user]);
 
-  const sidebarItems = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
-      { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
-      { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
-      { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
-    ],
-    []
-  );
+  const sidebarItems = useMemo(() => [
+    { label: 'Dashboard',          path: '/dashboard',          Icon: LayoutDashboard },
+    { label: 'Profile',            path: '/profile',            Icon: User            },
+    { label: 'Question Generator', path: '/questions/generate', Icon: Brain           },
+    { label: 'Mock Interview',     path: '/interview/mock',     Icon: PlayCircle      },
+    { label: 'Resume Interview',   path: '/interview/resume',   Icon: FileText        },
+    { label: 'Coding Practice',    path: '/coding/practice',    Icon: Code2           }
+  ], []);
 
-  const navbarLinks = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard' },
-      { label: 'Questions', path: '/questions/generate' },
-      { label: 'Mock', path: '/interview/mock' },
-      { label: 'Resume', path: '/interview/resume' },
-      { label: 'Coding', path: '/coding/practice' }
-    ],
-    []
-  );
+  const navbarLinks = useMemo(() => [
+    { label: 'Dashboard', path: '/dashboard'          },
+    { label: 'Questions',  path: '/questions/generate' },
+    { label: 'Mock',       path: '/interview/mock'     },
+    { label: 'Resume',     path: '/interview/resume'   },
+    { label: 'Coding',     path: '/coding/practice'    }
+  ], []);
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-[#0f172a] via-[#030712] to-[#020617] text-white overflow-hidden relative">
@@ -154,25 +138,25 @@ const Profile = () => {
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
               items={sidebarItems}
-              onNavigate={safeNavigate}
+              onNavigate={(path) => {
+                if (path === '/logout') { setConfirmLogoutOpen(true); return; }
+                navigate(path);
+              }}
               profile={{ name: displayName, avatar: profileData.avatar || user?.imageUrl || '' }}
               profilePath="/profile"
             />
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <Navbar
-                    brand="DevPrep"
-                    activeLabel="Profile"
-                    links={navbarLinks}
-                    onNavigate={safeNavigate}
-                    onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-                    avatarUrl={profileData.avatar || user?.imageUrl || ''}
-                  />
-                </div>
-              </div>
+              <Navbar
+                brand="DevPrep"
+                activeLabel="Profile"
+                links={navbarLinks}
+                onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+                avatarUrl={profileData.avatar || user?.imageUrl || ''}
+                onLogout={() => setConfirmLogoutOpen(true)}
+              />
 
+              {/* ── Profile header card ── */}
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -211,7 +195,7 @@ const Profile = () => {
                       whileHover={{ y: -1 }}
                       whileTap={{ scale: 0.98 }}
                       className="px-4 py-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-white/10 hover:border-white/20 font-semibold inline-flex items-center gap-2"
-                      onClick={() => safeNavigate('/profile/edit')}
+                      onClick={() => navigate('/profile/edit')}
                     >
                       <PencilLine className="w-4 h-4" />
                       Edit profile
@@ -220,7 +204,9 @@ const Profile = () => {
                 </div>
               </motion.div>
 
+              {/* ── Main grid ── */}
               <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left column: personal info + account settings */}
                 <div className="lg:col-span-2 space-y-6">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -228,12 +214,8 @@ const Profile = () => {
                     transition={{ duration: 0.6, delay: 0.05 }}
                     className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
                   >
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="text-lg font-semibold">Personal information</div>
-                        <div className="text-sm text-slate-400 mt-1">Your core profile details</div>
-                      </div>
-                    </div>
+                    <div className="text-lg font-semibold">Personal information</div>
+                    <div className="text-sm text-slate-400 mt-1">Your core profile details</div>
 
                     <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
@@ -246,7 +228,7 @@ const Profile = () => {
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Experience level</div>
-                        <div className="text-sm font-semibold text-slate-100 mt-1 truncate">{profileData.experienceLevel}</div>
+                        <div className="text-sm font-semibold text-slate-100 mt-1">{profileData.experienceLevel}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Target role</div>
@@ -258,10 +240,7 @@ const Profile = () => {
                       <div className="text-xs text-slate-500">Skills</div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {profileData.skills.map((s) => (
-                          <div
-                            key={s}
-                            className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-200"
-                          >
+                          <div key={s} className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-200">
                             {s}
                           </div>
                         ))}
@@ -283,7 +262,7 @@ const Profile = () => {
                     className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
                   >
                     <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0">
+                      <div>
                         <div className="text-lg font-semibold">Account settings</div>
                         <div className="text-sm text-slate-400 mt-1">Manage your account preferences</div>
                       </div>
@@ -291,7 +270,6 @@ const Profile = () => {
                         <Shield className="w-5 h-5 text-slate-300" />
                       </div>
                     </div>
-
                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <button
                         type="button"
@@ -313,6 +291,7 @@ const Profile = () => {
                   </motion.div>
                 </div>
 
+                {/* Right column: stat counters + go-to-dashboard shortcut */}
                 <div className="space-y-6">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -321,7 +300,7 @@ const Profile = () => {
                     className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
                   >
                     <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0">
+                      <div>
                         <div className="text-lg font-semibold">Statistics</div>
                         <div className="text-sm text-slate-400 mt-1">Your recent activity</div>
                       </div>
@@ -332,27 +311,31 @@ const Profile = () => {
 
                     <div className="mt-4 grid grid-cols-2 gap-3">
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Questions</div>
+                        <div className="text-xs text-slate-500">Questions saved</div>
                         <div className="text-xl font-semibold text-slate-100 mt-1">{Number(savedStats?.totalSaved) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Mock sessions</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">0</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(interviewStats?.totalInterviews) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Evaluations</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">0</div>
+                        <div className="text-xs text-slate-500">Completed</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(interviewStats?.completedInterviews) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Streak</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">0</div>
+                        <div className="text-xs text-slate-500">Avg. score</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">
+                          {interviewStats?.averageScore != null
+                            ? `${Math.round(interviewStats.averageScore)}%`
+                            : '–'}
+                        </div>
                       </div>
                     </div>
 
                     <button
                       type="button"
                       className="mt-4 w-full flex items-center justify-between px-4 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                      onClick={() => safeNavigate('/dashboard')}
+                      onClick={() => navigate('/dashboard')}
                     >
                       <span>Go to dashboard</span>
                       <ChevronRight className="w-4 h-4 text-slate-400" />
@@ -360,6 +343,17 @@ const Profile = () => {
                   </motion.div>
                 </div>
               </div>
+
+              {/* ── Analytics section (LeetCode-style) ── */}
+              {clerkToken && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="text-lg font-semibold">Coding Analytics</div>
+                    <div className="text-xs text-slate-500">LeetCode-style</div>
+                  </div>
+                  <ProfileAnalytics clerkToken={clerkToken} />
+                </div>
+              )}
 
               <div className="mt-8">
                 <Footer />
@@ -369,6 +363,7 @@ const Profile = () => {
         </div>
       </div>
 
+      {/* ── Logout confirmation modal ── */}
       <Modal
         open={confirmLogoutOpen}
         title="Confirm Logout"

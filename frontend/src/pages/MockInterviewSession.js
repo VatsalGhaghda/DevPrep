@@ -54,15 +54,8 @@ const MockInterviewSession = () => {
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate', '/interview/mock']),
-    []
-  );
-
   const safeNavigate = (path) => {
     if (path === '/logout') { setConfirmLogoutOpen(true); return; }
-    if (path.startsWith('/interview/mock/')) { navigate(path); return; }
-    if (!knownRoutes.has(path)) { toast.info('Coming soon'); return; }
     navigate(path);
   };
 
@@ -264,6 +257,7 @@ const MockInterviewSession = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={avatarUrl}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

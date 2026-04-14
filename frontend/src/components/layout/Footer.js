@@ -9,9 +9,9 @@ const Footer = ({ onNavigate }) => {
   ];
 
   const socials = [
-    { label: 'Twitter', Icon: Twitter, path: '/social/twitter' },
-    { label: 'LinkedIn', Icon: Linkedin, path: '/social/linkedin' },
-    { label: 'GitHub', Icon: Github, path: '/social/github' }
+    { label: 'Twitter', Icon: Twitter, url: 'https://twitter.com' },
+    { label: 'LinkedIn', Icon: Linkedin, url: 'https://linkedin.com' },
+    { label: 'GitHub', Icon: Github, url: 'https://github.com' }
   ];
 
   return (
@@ -29,7 +29,7 @@ const Footer = ({ onNavigate }) => {
               type="button"
               className="px-3 py-2 rounded-xl text-xs text-slate-300 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10"
               onClick={() => {
-                if (onNavigate) onNavigate(l.path);
+                // Ignore for now since these pages don't exist
               }}
             >
               {l.label}
@@ -38,18 +38,17 @@ const Footer = ({ onNavigate }) => {
         </div>
 
         <div className="flex items-center gap-2">
-          {socials.map(({ label, Icon, path }) => (
-            <button
+          {socials.map(({ label, Icon, url }) => (
+            <a
               key={label}
-              type="button"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
               className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center justify-center"
-              onClick={() => {
-                if (onNavigate) onNavigate(path);
-              }}
               aria-label={label}
             >
               <Icon className="w-5 h-5 text-slate-300" />
-            </button>
+            </a>
           ))}
         </div>
       </div>

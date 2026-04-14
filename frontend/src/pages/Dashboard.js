@@ -18,7 +18,7 @@ import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import { clerkAPI, questionsAPI } from '../services/api';
+import { clerkAPI, questionsAPI, analyticsAPI } from '../services/api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -31,6 +31,7 @@ const Dashboard = () => {
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [dbProfile, setDbProfile] = useState(null);
   const [savedStats, setSavedStats] = useState(null);
+  const [interviewOverview, setInterviewOverview] = useState(null);
   const didSyncRef = useRef(false);
 
   useEffect(() => {
@@ -74,9 +75,21 @@ const Dashboard = () => {
         if (!token) return;
         const res = await clerkAPI.getProfile(token);
         setDbProfile(res.data?.user || null);
-      } catch (_) {
-        // Ignore
-      }
+      } catch (_) {}
+    })();
+  }, [authLoaded, isSignedIn, getToken, user]);
+
+  // Fetch interview overview stats
+  useEffect(() => {
+    if (!authLoaded || !isSignedIn || !user) return;
+
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await analyticsAPI.getOverview(token);
+        setInterviewOverview(res.data?.overview || null);
+      } catch (_) {}
     })();
   }, [authLoaded, isSignedIn, getToken, user]);
 
@@ -87,13 +100,12 @@ const Dashboard = () => {
     (dbProfile && dbProfile.name) ||
     'User';
 
-  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock', '/interview/resume', '/coding/practice']), []);
+
 
   const handleLogout = async () => {
     if (logoutLoading) return;
     setLogoutLoading(true);
     try {
-      // Let Clerk handle navigation to avoid double redirects / double loads
       await signOut({ redirectUrl: '/login' });
     } catch (error) {
       toast.error('Failed to logout');
@@ -101,17 +113,12 @@ const Dashboard = () => {
     }
   };
 
+  // All routes are real — use navigate() directly
   const safeNavigate = (path) => {
     if (path === '/logout') {
       setConfirmLogoutOpen(true);
       return;
     }
-
-    if (!knownRoutes.has(path)) {
-      toast.info('Coming soon');
-      return;
-    }
-
     navigate(path);
   };
 
@@ -192,12 +199,12 @@ const Dashboard = () => {
     });
   }, [savedStats]);
 
-  const today = [
-    { label: 'Generate: 10 questions (DSA basics)', Icon: Brain },
-    { label: 'Mock interview: 1 session', Icon: PlayCircle },
-    { label: 'Resume interview: personalized prep', Icon: FileText },
-    { label: 'Coding practice: 20 min patterns', Icon: BookOpen }
-  ];
+  const today = useMemo(() => [
+    { label: `Saved questions: ${Number(savedStats?.totalSaved) || 0} total`, Icon: Brain },
+    { label: `Mock interviews: ${Number(interviewOverview?.totalInterviews) || 0} sessions`, Icon: PlayCircle },
+    { label: `Completed: ${Number(interviewOverview?.completedInterviews) || 0} sessions`, Icon: FileText },
+    { label: 'Coding practice: try a new problem today', Icon: BookOpen }
+  ], [savedStats, interviewOverview]);
 
   const sidebarItems = useMemo(
     () => [
@@ -253,6 +260,7 @@ const Dashboard = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={(dbProfile && dbProfile.avatar) || user?.imageUrl || ''}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

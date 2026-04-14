@@ -7,7 +7,7 @@ const ProtectedRoute = ({ children }) => {
     <>
       <SignedIn>{children}</SignedIn>
       <SignedOut>
-        <Navigate to="/sign-in" replace />
+        <Navigate to="/login" replace />
       </SignedOut>
     </>
   );

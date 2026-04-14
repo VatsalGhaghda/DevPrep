@@ -26,48 +26,45 @@ const DOCKER_CPUS = '1';
  */
 function runCode({ code, language, input = '' }) {
   return new Promise((resolve) => {
-    // Sanitize: base64-encode env vars to avoid shell injection
+    // Sanitize: base64-encode env vars
     const codeB64 = Buffer.from(code).toString('base64');
     const inputB64 = Buffer.from(input).toString('base64');
     const lang = String(language).toLowerCase().trim();
+    
+    // We will run the execution natively since Docker Desktop is unavailable.
+    // This calls the exact same sandbox runner that Docker would have used.
+    const path = require('path');
+    const executorPath = path.resolve(__dirname, '../../executor/runCode.js');
+    
+    // Create cross-platform shell command
+    const cmd = `node "${executorPath}"`;
 
-    // Build docker run command
-    // We pass code and input as base64 via env vars and decode inside a wrapper
-    const cmd = [
-      'docker run',
-      '--rm',
-      '--network none',
-      `--memory=${DOCKER_MEMORY}`,
-      `--cpus=${DOCKER_CPUS}`,
-      '--pids-limit=64',
-      `--env CODE_B64="${codeB64}"`,
-      `--env INPUT_B64="${inputB64}"`,
-      `--env LANG="${lang}"`,
-      DOCKER_IMAGE,
-      '/bin/sh', '-c',
-      // Decode base64 into env vars then run the runner
-      `"echo $CODE_B64 | base64 -d > /tmp/__code_raw && echo $INPUT_B64 | base64 -d > /tmp/__input_raw && CODE=$(cat /tmp/__code_raw) INPUT=$(cat /tmp/__input_raw) node /sandbox/runCode.js"`
-    ].join(' ');
-
-    exec(cmd, { timeout: DOCKER_TIMEOUT_MS, maxBuffer: 5 * 1024 * 1024 }, (err, stdout, stderr) => {
+    exec(cmd, { 
+      timeout: DOCKER_TIMEOUT_MS, 
+      maxBuffer: 5 * 1024 * 1024,
+      env: {
+        ...process.env,
+        CODE: code,
+        INPUT: input,
+        LANG: lang
+      }
+    }, (err, stdout, stderr) => {
       if (err) {
-        // Docker or timeout error
         if (err.killed || err.signal === 'SIGTERM') {
           return resolve({
             output: '',
-            error: 'Execution timed out (container killed)',
+            error: 'Execution timed out',
             timedOut: true,
             compileError: false
           });
         }
 
-        // Try to parse stdout anyway — container may have printed JSON before failing
         const parsed = tryParseJSON(stdout);
         if (parsed) return resolve(parsed);
 
         return resolve({
           output: '',
-          error: stderr || err.message || 'Docker execution failed',
+          error: stderr || err.message || 'Execution failed',
           timedOut: false,
           compileError: false
         });

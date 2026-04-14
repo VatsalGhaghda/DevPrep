@@ -185,14 +185,8 @@ const QuestionGenerator = () => {
   const [statsLoading, setStatsLoading] = useState(true);
 
   /* ── navigation ─────────────────────────────────────────────────────────── */
-  const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate', '/interview/mock']),
-    []
-  );
-
   const safeNavigate = (path) => {
     if (path === '/logout') { setConfirmLogoutOpen(true); return; }
-    if (!knownRoutes.has(path)) { toast.info('Coming soon'); return; }
     navigate(path);
   };
 
@@ -492,6 +486,7 @@ const QuestionGenerator = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={avatarUrl}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

@@ -67,25 +67,22 @@ const ResumeInterview = () => {
   const [duration, setDuration] = useState(30);
   const [starting, setStarting] = useState(false);
 
-  /* ── nav ───────────────────────────────────────────────────────────── */
-  const knownRoutes = useMemo(() => new Set(['/dashboard', '/profile', '/questions/generate', '/interview/mock', '/interview/resume']), []);
+  const safeNavigate = (path) => {
+    if (path === '/logout') { setConfirmLogoutOpen(true); return; }
+    navigate(path);
+  };
 
   const handleLogout = async () => {
     if (logoutLoading) return;
     setLogoutLoading(true);
     try {
       await signOut({ redirectUrl: '/login' });
-    } catch (error) {
+    } catch (_) {
       toast.error('Failed to logout');
       setLogoutLoading(false);
     }
   };
 
-  const safeNavigate = (path) => {
-    if (path === '/logout') { setConfirmLogoutOpen(true); return; }
-    if (!knownRoutes.has(path)) { toast.info('Coming soon'); return; }
-    navigate(path);
-  };
 
   const displayName = user?.fullName || [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username || (dbProfile && dbProfile.name) || 'User';
 
@@ -303,6 +300,7 @@ const ResumeInterview = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={avatarUrl}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

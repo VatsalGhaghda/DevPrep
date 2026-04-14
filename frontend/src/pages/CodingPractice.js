@@ -162,17 +162,8 @@ const CodingPractice = () => {
     }
   };
 
-  const knownRoutes = useMemo(() => new Set([
-    '/dashboard', '/profile', '/questions/generate', '/interview/mock',
-    '/interview/resume', '/coding/practice'
-  ]), []);
-
   const safeNavigate = (path) => {
     if (path === '/logout') { setConfirmLogoutOpen(true); return; }
-    if (!knownRoutes.has(path) && !path.startsWith('/coding/challenge')) {
-      toast.info('Coming soon');
-      return;
-    }
     navigate(path);
   };
 
@@ -239,6 +230,7 @@ const CodingPractice = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={(dbProfile && dbProfile.avatar) || user?.imageUrl || ''}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

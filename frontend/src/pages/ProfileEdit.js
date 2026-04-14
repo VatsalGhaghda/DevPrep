@@ -79,19 +79,9 @@ const ProfileEdit = () => {
     user?.username ||
     'User';
 
-  const knownRoutes = useMemo(
-    () => new Set(['/dashboard', '/profile', '/profile/edit', '/questions/generate', '/interview/mock']),
-    []
-  );
-
   const safeNavigate = (path) => {
     if (path === '/logout') {
       setConfirmLogoutOpen(true);
-      return;
-    }
-
-    if (!knownRoutes.has(path)) {
-      toast.info('Coming soon');
       return;
     }
     navigate(path);
@@ -316,6 +306,7 @@ const ProfileEdit = () => {
                     onNavigate={safeNavigate}
                     onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
                     avatarUrl={avatar || user?.imageUrl || ''}
+                    onLogout={() => setConfirmLogoutOpen(true)}
                   />
                 </div>
               </div>

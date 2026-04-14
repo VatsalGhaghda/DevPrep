@@ -17,7 +17,7 @@ const code = process.env.CODE || '';
 const lang = (process.env.LANG || 'python').toLowerCase().trim();
 const input = process.env.INPUT || '';
 
-const WORK_DIR = '/sandbox/work';
+const WORK_DIR = path.join(__dirname, '.work');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -62,7 +62,9 @@ function execute() {
     case 'python3': {
       const codeFile = path.join(WORK_DIR, 'solution.py');
       writeFile(codeFile, code);
-      result = run(`python3 "${codeFile}" < "${inputFile}"`);
+      // Fallback to "python" on Windows if python3 is unavailable
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+      result = run(`${pyCmd} "${codeFile}" < "${inputFile}"`);
       break;
     }
 

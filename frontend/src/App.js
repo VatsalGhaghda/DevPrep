@@ -1,6 +1,7 @@
 import './styles/App.css';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ClerkProvider } from '@clerk/clerk-react';
+
 import Auth from './pages/Auth';
 import SSOCallback from './pages/SSOCallback';
 import Dashboard from './pages/Dashboard';
@@ -10,12 +11,14 @@ import ResetPassword from './pages/ResetPassword';
 import OAuthSuccess from './pages/OAuthSuccess';
 import Profile from './pages/Profile';
 import ProfileEdit from './pages/ProfileEdit';
+import PublicProfile from './pages/PublicProfile';
 import QuestionGenerator from './pages/QuestionGenerator';
 import MockInterviewSetup from './pages/MockInterviewSetup';
 import MockInterviewSession from './pages/MockInterviewSession';
 import ResumeInterview from './pages/ResumeInterview';
 import CodingPractice from './pages/CodingPractice';
 import CodingChallenge from './pages/CodingChallenge';
+import NotFound from './pages/NotFound';
 
 import ToastProvider from './components/ui/ToastProvider';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -31,87 +34,36 @@ function App() {
           <BrowserRouter>
             <ToastProvider />
             <Routes>
-              <Route path="/" element={<Auth />} />
-              <Route path="/login" element={<Auth />} />
-              <Route path="/register" element={<Auth />} />
-              <Route path="/sso" element={<SSOCallback />} />
-              <Route path="/sso-callback" element={<SSOCallback />} />
-              <Route path="/verify-email" element={<VerifyEmail />} />
+              {/* ── Public auth routes ── */}
+              <Route path="/"                element={<Auth />} />
+              <Route path="/login"           element={<Auth />} />
+              <Route path="/register"        element={<Auth />} />
+              <Route path="/sso"             element={<SSOCallback />} />
+              <Route path="/sso-callback"    element={<SSOCallback />} />
+              <Route path="/verify-email"    element={<VerifyEmail />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/oauth-success" element={<OAuthSuccess />} />
-              <Route 
-                path="/dashboard" 
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/profile" 
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/profile/edit" 
-                element={
-                  <ProtectedRoute>
-                    <ProfileEdit />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/questions/generate" 
-                element={
-                  <ProtectedRoute>
-                    <QuestionGenerator />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/interview/mock" 
-                element={
-                  <ProtectedRoute>
-                    <MockInterviewSetup />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/interview/mock/:sessionId" 
-                element={
-                  <ProtectedRoute>
-                    <MockInterviewSession />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/interview/resume" 
-                element={
-                  <ProtectedRoute>
-                    <ResumeInterview />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/coding/practice" 
-                element={
-                  <ProtectedRoute>
-                    <CodingPractice />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/coding/challenge/:id" 
-                element={
-                  <ProtectedRoute>
-                    <CodingChallenge />
-                  </ProtectedRoute>
-                } 
-              />
+              <Route path="/reset-password"  element={<ResetPassword />} />
+              <Route path="/oauth-success"   element={<OAuthSuccess />} />
+
+              {/* ── Public user profile ── */}
+              <Route path="/profile/:username" element={<PublicProfile />} />
+
+              {/* ── Protected routes ── */}
+              <Route path="/dashboard"   element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/profile"     element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+              <Route path="/profile/edit" element={<ProtectedRoute><ProfileEdit /></ProtectedRoute>} />
+
+              <Route path="/questions/generate" element={<ProtectedRoute><QuestionGenerator /></ProtectedRoute>} />
+
+              <Route path="/interview/mock"              element={<ProtectedRoute><MockInterviewSetup /></ProtectedRoute>} />
+              <Route path="/interview/mock/:sessionId"   element={<ProtectedRoute><MockInterviewSession /></ProtectedRoute>} />
+              <Route path="/interview/resume"            element={<ProtectedRoute><ResumeInterview /></ProtectedRoute>} />
+
+              <Route path="/coding/practice"        element={<ProtectedRoute><CodingPractice /></ProtectedRoute>} />
+              <Route path="/coding/challenge/:id"   element={<ProtectedRoute><CodingChallenge /></ProtectedRoute>} />
+
+              {/* ── 404 catch-all ── */}
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
         </ClerkProvider>
