@@ -134,7 +134,9 @@ export const analyticsAPI = {
   getSubmissionActivity: (clerkToken) =>
     api.get('/analytics/submission-activity', { headers: { Authorization: `Bearer ${clerkToken}` } }),
   getStreak: (clerkToken) =>
-    api.get('/analytics/streak', { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.get('/analytics/streak', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  getProfileInsights: (clerkToken) =>
+    api.get('/analytics/profile-insights', { headers: { Authorization: `Bearer ${clerkToken}` } })
 };
 
 /* ── Users (public search) ── */

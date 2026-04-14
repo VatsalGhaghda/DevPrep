@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
 const InterviewSession = require('../models/InterviewSession');
+const MockInterviewSession = require('../models/MockInterviewSession');
+const SavedQuestion = require('../models/SavedQuestion');
+const Resume = require('../models/Resume');
 const Submission = require('../models/Submission');
 const CodingProblem = require('../models/CodingProblem');
 
@@ -118,7 +121,7 @@ async function getCodingStats(req, res, next) {
 
     // Match field: prefer clerkUserId if set, otherwise userId
     const matchUser = clerkUserId
-      ? { clerkUserId }
+      ? { $or: [{ clerkUserId }, { userId: new mongoose.Types.ObjectId(userId) }] }
       : { userId: new mongoose.Types.ObjectId(userId) };
 
     // Accepted submissions per problem (deduplicated by problem)
@@ -157,18 +160,20 @@ async function getCodingStats(req, res, next) {
     ]);
 
     // Build difficulty map
-    const solvedMap = { Easy: 0, Medium: 0, Hard: 0 };
+    const solvedMap = { easy: 0, medium: 0, hard: 0 };
     solvedAgg.forEach(({ _id, count }) => {
-      if (_id in solvedMap) solvedMap[_id] = count;
+      const k = typeof _id === 'string' ? _id.toLowerCase() : _id;
+      if (k in solvedMap) solvedMap[k] = count;
     });
 
-    const totalMap = { Easy: 0, Medium: 0, Hard: 0 };
+    const totalMap = { easy: 0, medium: 0, hard: 0 };
     totalProblemsAgg.forEach(({ _id, count }) => {
-      if (_id in totalMap) totalMap[_id] = count;
+      const k = typeof _id === 'string' ? _id.toLowerCase() : _id;
+      if (k in totalMap) totalMap[k] = count;
     });
 
-    const totalSolved = solvedMap.Easy + solvedMap.Medium + solvedMap.Hard;
-    const totalProblems = totalMap.Easy + totalMap.Medium + totalMap.Hard;
+    const totalSolved = solvedMap.easy + solvedMap.medium + solvedMap.hard;
+    const totalProblems = totalMap.easy + totalMap.medium + totalMap.hard;
 
     const subStats = totalSubAgg[0] || { total: 0, accepted: 0 };
     const acceptanceRate =
@@ -180,15 +185,138 @@ async function getCodingStats(req, res, next) {
       codingStats: {
         totalSolved,
         totalProblems,
-        easySolved: solvedMap.Easy,
-        mediumSolved: solvedMap.Medium,
-        hardSolved: solvedMap.Hard,
-        totalEasy: totalMap.Easy,
-        totalMedium: totalMap.Medium,
-        totalHard: totalMap.Hard,
+        easySolved: solvedMap.easy,
+        mediumSolved: solvedMap.medium,
+        hardSolved: solvedMap.hard,
+        totalEasy: totalMap.easy,
+        totalMedium: totalMap.medium,
+        totalHard: totalMap.hard,
         totalSubmissions: subStats.total,
         acceptedSubmissions: subStats.accepted,
         acceptanceRate
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/analytics/profile-insights
+ * Returns aggregated profile analytics for charts on the profile page.
+ */
+async function getProfileInsights(req, res, next) {
+  try {
+    const clerkUserId = req.user.clerkUserId;
+    const userId = req.user._id;
+
+    const matchUser = clerkUserId
+      ? { $or: [{ clerkUserId }, { userId: new mongoose.Types.ObjectId(userId) }] }
+      : { userId: new mongoose.Types.ObjectId(userId) };
+
+    const [
+      languageUsage,
+      solvedCategories,
+      mockByType,
+      mockScoreAgg,
+      totalMockSessions,
+      totalResumeInterviews,
+      totalSolvedCoding,
+      resumeCount,
+      savedByDifficulty,
+      savedByRole,
+      questionGeneratorStats
+    ] = await Promise.all([
+      Submission.aggregate([
+        { $match: { ...matchUser, isDraft: false } },
+        { $group: { _id: '$language', count: { $sum: 1 } } },
+        { $project: { _id: 0, language: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+      Submission.aggregate([
+        { $match: { ...matchUser, status: 'accepted', isDraft: false } },
+        { $group: { _id: '$problemId' } },
+        {
+          $lookup: {
+            from: 'codingproblems',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'problem'
+          }
+        },
+        { $unwind: '$problem' },
+        { $group: { _id: '$problem.category', count: { $sum: 1 } } },
+        { $project: { _id: 0, category: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+      MockInterviewSession.aggregate([
+        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $group: { _id: '$interviewType', count: { $sum: 1 } } },
+        { $project: { _id: 0, type: '$_id', count: 1 } },
+        { $sort: { count: -1 } }
+      ]),
+      MockInterviewSession.aggregate([
+        {
+          $match: {
+            userId: new mongoose.Types.ObjectId(userId),
+            status: 'completed',
+            'evaluation.overallScore': { $ne: null }
+          }
+        },
+        { $group: { _id: null, averageScore: { $avg: '$evaluation.overallScore' } } }
+      ]),
+      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId) }),
+      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId), interviewType: 'resume-based' }),
+      Submission.distinct('problemId', { ...matchUser, status: 'accepted', isDraft: false }).then(ids => ids.length),
+      Resume.countDocuments({ userId: new mongoose.Types.ObjectId(userId) }),
+      SavedQuestion.aggregate([
+        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $group: { _id: '$difficulty', count: { $sum: 1 } } },
+        { $project: { _id: 0, difficulty: '$_id', count: 1 } },
+        { $sort: { count: -1 } }
+      ]),
+      SavedQuestion.aggregate([
+        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $group: { _id: '$role', count: { $sum: 1 } } },
+        { $project: { _id: 0, role: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+      SavedQuestion.aggregate([
+        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $unwind: { path: '$topics', preserveNullAndEmptyArrays: true } },
+        { $group: { _id: { $toLower: '$topics' }, count: { $sum: 1 } } },
+        { $project: { _id: 0, topic: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ])
+    ]);
+
+    const averageMockScore = mockScoreAgg.length ? mockScoreAgg[0].averageScore : null;
+
+    res.status(200).json({
+      insights: {
+        languageUsage,
+        solvedCategories,
+        questionGeneratorStats,
+        mock: {
+          totalSessions: totalMockSessions,
+          resumeInterviews: totalResumeInterviews,
+          byType: mockByType,
+          averageScore: averageMockScore
+        },
+        coding: {
+          totalSolved: totalSolvedCoding
+        },
+        resume: {
+          uploadedCount: resumeCount
+        },
+        savedQuestions: {
+          byDifficulty: savedByDifficulty,
+          byRole: savedByRole
+        }
       }
     });
   } catch (err) {
@@ -206,7 +334,7 @@ async function getSubmissionActivity(req, res, next) {
     const userId = req.user._id;
 
     const matchUser = clerkUserId
-      ? { clerkUserId }
+      ? { $or: [{ clerkUserId }, { userId: new mongoose.Types.ObjectId(userId) }] }
       : { userId: new mongoose.Types.ObjectId(userId) };
 
     const since = new Date();
@@ -246,7 +374,7 @@ async function getStreakData(req, res, next) {
     const userId = req.user._id;
 
     const matchUser = clerkUserId
-      ? { clerkUserId }
+      ? { $or: [{ clerkUserId }, { userId: new mongoose.Types.ObjectId(userId) }] }
       : { userId: new mongoose.Types.ObjectId(userId) };
 
     // Get all unique active days (any submission)
@@ -323,5 +451,6 @@ module.exports = {
   getTopics,
   getCodingStats,
   getSubmissionActivity,
-  getStreakData
+  getStreakData,
+  getProfileInsights
 };

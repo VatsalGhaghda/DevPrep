@@ -21,6 +21,7 @@ import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
 import ProfileAnalytics from '../components/ProfileAnalytics';
+import ProfileInsightsPanel from '../components/ProfileInsightsPanel';
 import { clerkAPI, questionsAPI, analyticsAPI } from '../services/api';
 
 const Profile = () => {
@@ -34,6 +35,7 @@ const Profile = () => {
   const [dbProfile, setDbProfile]   = useState(null);
   const [savedStats, setSavedStats] = useState(null);
   const [interviewStats, setInterviewStats] = useState(null);
+  const [profileInsights, setProfileInsights] = useState(null);
   const [clerkToken, setClerkToken] = useState(null);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [logoutLoading, setLogoutLoading]         = useState(false);
@@ -59,10 +61,11 @@ const Profile = () => {
         setClerkToken(token);
 
         // Run all fetches in parallel
-        const [profileRes, savedRes, overviewRes] = await Promise.allSettled([
+        const [profileRes, savedRes, overviewRes, insightsRes] = await Promise.allSettled([
           clerkAPI.getProfile(token),
           questionsAPI.getSavedStats(token),
-          analyticsAPI.getOverview(token)
+          analyticsAPI.getOverview(token),
+          analyticsAPI.getProfileInsights(token)
         ]);
 
         if (profileRes.status === 'fulfilled') {
@@ -73,6 +76,9 @@ const Profile = () => {
         }
         if (overviewRes.status === 'fulfilled') {
           setInterviewStats(overviewRes.value.data?.overview || null);
+        }
+        if (insightsRes.status === 'fulfilled') {
+          setProfileInsights(insightsRes.value.data?.insights || null);
         }
       } catch (_) {
         // Non-fatal – display shows zeros / fallbacks
@@ -255,42 +261,8 @@ const Profile = () => {
                     )}
                   </motion.div>
 
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, delay: 0.08 }}
-                    className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="text-lg font-semibold">Account settings</div>
-                        <div className="text-sm text-slate-400 mt-1">Manage your account preferences</div>
-                      </div>
-                      <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                        <Shield className="w-5 h-5 text-slate-300" />
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <button
-                        type="button"
-                        className="text-left rounded-2xl bg-white/5 border border-white/10 p-4 hover:border-white/20 transition-colors"
-                        onClick={() => toast.info('Coming soon')}
-                      >
-                        <div className="text-sm font-semibold text-slate-100">Security</div>
-                        <div className="text-xs text-slate-500 mt-1">Password, sessions, MFA</div>
-                      </button>
-                      <button
-                        type="button"
-                        className="text-left rounded-2xl bg-white/5 border border-white/10 p-4 hover:border-white/20 transition-colors"
-                        onClick={() => toast.info('Coming soon')}
-                      >
-                        <div className="text-sm font-semibold text-slate-100">Notifications</div>
-                        <div className="text-xs text-slate-500 mt-1">Email and product updates</div>
-                      </button>
-                    </div>
-                  </motion.div>
-                </div>
-
+                                  </div>
+                  
                 {/* Right column: stat counters + go-to-dashboard shortcut */}
                 <div className="space-y-6">
                   <motion.div
@@ -316,19 +288,15 @@ const Profile = () => {
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
                         <div className="text-xs text-slate-500">Mock sessions</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(interviewStats?.totalInterviews) || 0}</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.mock?.totalSessions) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Completed</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(interviewStats?.completedInterviews) || 0}</div>
+                        <div className="text-xs text-slate-500">Resume interviews</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.mock?.resumeInterviews) || 0}</div>
                       </div>
                       <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Avg. score</div>
-                        <div className="text-xl font-semibold text-slate-100 mt-1">
-                          {interviewStats?.averageScore != null
-                            ? `${Math.round(interviewStats.averageScore)}%`
-                            : '–'}
-                        </div>
+                        <div className="text-xs text-slate-500">Coding solved</div>
+                        <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.coding?.totalSolved) || 0}</div>
                       </div>
                     </div>
 
@@ -352,6 +320,17 @@ const Profile = () => {
                     <div className="text-xs text-slate-500">LeetCode-style</div>
                   </div>
                   <ProfileAnalytics clerkToken={clerkToken} />
+                </div>
+              )}
+
+              {/* ── Profile insights (graphs) ── */}
+              {clerkToken && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="text-lg font-semibold">Profile Insights</div>
+                    <div className="text-xs text-slate-500">Your progress breakdown</div>
+                  </div>
+                  <ProfileInsightsPanel clerkToken={clerkToken} />
                 </div>
               )}
 

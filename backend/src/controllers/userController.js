@@ -182,21 +182,49 @@ async function getPublicAnalytics(req, res, next) {
   try {
     const { username } = req.params;
 
+    console.log('getPublicAnalytics - username:', username);
+
     const user = await User.findOne({
       $or: [{ username }, { name: username }]
     })
       .select('_id clerkUserId')
       .lean();
 
+    console.log('getPublicAnalytics - found user:', user);
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Match field: prefer clerkUserId if set, otherwise userId
     const matchUser = user.clerkUserId
-      ? { clerkUserId: user.clerkUserId }
-      : { userId: user._id };
+      ? { $or: [{ clerkUserId: user.clerkUserId }, { userId: new mongoose.Types.ObjectId(user._id) }] }
+      : { userId: new mongoose.Types.ObjectId(user._id) };
 
-    // Coding stats
+    // Coding stats - First check if user has any submissions
+    const allSubmissions = await Submission.find(matchUser).lean();
+    console.log('getPublicAnalytics - Total submissions found:', allSubmissions.length);
+    
+    const acceptedSubmissions = await Submission.find({ ...matchUser, status: 'accepted', isDraft: false }).lean();
+    console.log('getPublicAnalytics - Accepted submissions found:', acceptedSubmissions.length);
+    
+    // First, let's get all accepted submissions and check their structure
+    const acceptedSubmissionsPopulated = await Submission.find({ ...matchUser, status: 'accepted', isDraft: false })
+      .populate('problemId')
+      .lean();
+    
+    console.log('getPublicAnalytics - Accepted submissions with problem populated:', acceptedSubmissionsPopulated.length);
+    acceptedSubmissionsPopulated.forEach((sub, i) => {
+      console.log(`Accepted Submission ${i+1}:`, {
+        _id: sub._id,
+        problemId: sub.problemId,
+        problem: sub.problemId,
+        status: sub.status,
+        isDraft: sub.isDraft
+      });
+    });
+    
+    // Now try the aggregation with a simpler approach
     const solvedAgg = await Submission.aggregate([
       { $match: { ...matchUser, status: 'accepted', isDraft: false } },
       { $group: { _id: '$problemId' } },
@@ -212,26 +240,26 @@ async function getPublicAnalytics(req, res, next) {
       { $group: { _id: '$problem.difficulty', count: { $sum: 1 } } }
     ]);
 
-    const totalSubAgg = await Submission.aggregate([
-      { $match: { ...matchUser, isDraft: false } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          accepted: { $sum: { $cond: [{ $eq: ['$status', 'accepted'] }, 1, 0] } }
-        }
-      }
-    ]);
-
     const totalProblemsAgg = await CodingProblem.aggregate([
       { $group: { _id: '$difficulty', count: { $sum: 1 } } }
     ]);
 
-    const solvedMap = { Easy: 0, Medium: 0, Hard: 0 };
-    solvedAgg.forEach(({ _id, count }) => { if (_id in solvedMap) solvedMap[_id] = count; });
+    const solvedMap = { easy: 0, medium: 0, hard: 0 };
+    console.log('getPublicAnalytics - solvedAgg:', solvedAgg);
+    solvedAgg.forEach(({ _id, count }) => {
+      const k = typeof _id === 'string' ? _id.toLowerCase() : _id;
+      if (k in solvedMap) solvedMap[k] = count;
+    });
 
-    const totalMap = { Easy: 0, Medium: 0, Hard: 0 };
-    totalProblemsAgg.forEach(({ _id, count }) => { if (_id in totalMap) totalMap[_id] = count; });
+    const totalMap = { easy: 0, medium: 0, hard: 0 };
+    console.log('getPublicAnalytics - totalProblemsAgg:', totalProblemsAgg);
+    totalProblemsAgg.forEach(({ _id, count }) => {
+      const k = typeof _id === 'string' ? _id.toLowerCase() : _id;
+      if (k in totalMap) totalMap[k] = count;
+    });
+
+    console.log('getPublicAnalytics - solvedMap:', solvedMap);
+    console.log('getPublicAnalytics - totalMap:', totalMap);
 
     const subStats = totalSubAgg[0] || { total: 0, accepted: 0 };
     const acceptanceRate = subStats.total > 0 ? Math.round((subStats.accepted / subStats.total) * 100) : 0;
@@ -293,23 +321,27 @@ async function getPublicAnalytics(req, res, next) {
       }
     }
 
-    res.status(200).json({
+    const responseData = {
       codingStats: {
-        totalSolved: solvedMap.Easy + solvedMap.Medium + solvedMap.Hard,
-        totalProblems: totalMap.Easy + totalMap.Medium + totalMap.Hard,
-        easySolved: solvedMap.Easy,
-        mediumSolved: solvedMap.Medium,
-        hardSolved: solvedMap.Hard,
-        totalEasy: totalMap.Easy,
-        totalMedium: totalMap.Medium,
-        totalHard: totalMap.Hard,
+        totalSolved: solvedMap.easy + solvedMap.medium + solvedMap.hard,
+        totalProblems: totalMap.easy + totalMap.medium + totalMap.hard,
+        easySolved: solvedMap.easy,
+        mediumSolved: solvedMap.medium,
+        hardSolved: solvedMap.hard,
+        totalEasy: totalMap.easy,
+        totalMedium: totalMap.medium,
+        totalHard: totalMap.hard,
         totalSubmissions: subStats.total,
         acceptedSubmissions: subStats.accepted,
         acceptanceRate
       },
       activity,
       streak: { currentStreak, longestStreak, lastActiveDate }
-    });
+    };
+
+    console.log('getPublicAnalytics - Final response data:', responseData);
+
+    res.status(200).json(responseData);
   } catch (err) {
     next(err);
   }

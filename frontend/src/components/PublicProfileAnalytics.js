@@ -11,6 +11,10 @@ import { userAPI } from '../services/api';
 
 /* ─── Helpers ─── */
 
+/**
+ * Build an ISO-date-keyed map from activity array
+ * and fill in every day of the current year with a count (0 if missing).
+ */
 function buildHeatmapData(activity = []) {
   const map = {};
   activity.forEach(({ date, count }) => {
@@ -19,11 +23,16 @@ function buildHeatmapData(activity = []) {
 
   const result = [];
   const today = new Date();
+  const currentYear = today.getFullYear();
   today.setHours(0, 0, 0, 0);
 
-  for (let i = 364; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
+  // Start from January 1st of current year
+  const yearStart = new Date(currentYear, 0, 1);
+  const daysInYear = Math.floor((today - yearStart) / (1000 * 60 * 60 * 24)) + 1;
+
+  for (let i = daysInYear - 1; i >= 0; i--) {
+    const d = new Date(yearStart);
+    d.setDate(yearStart.getDate() + i);
     const key = d.toISOString().split('T')[0];
     result.push({ date: key, count: map[key] || 0 });
   }
@@ -111,28 +120,94 @@ function DifficultyRings({ easy, medium, hard, totalEasy, totalMedium, totalHard
 
 function ActivityHeatmap({ activity }) {
   const cells = buildHeatmapData(activity);
-  const weeks = [];
-  for (let i = 0; i < cells.length; i += 7) {
-    weeks.push(cells.slice(i, i + 7));
+  
+  // Group by month
+  const months = [];
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  
+  // Create month groups
+  for (let month = 0; month < 12; month++) {
+    const monthStart = new Date(currentYear, month, 1);
+    const monthEnd = new Date(currentYear, month + 1, 0);
+    const monthCells = cells.filter(cell => {
+      const cellDate = new Date(cell.date);
+      return cellDate >= monthStart && cellDate < monthEnd;
+    });
+    
+    // Get the first day of the month to determine week alignment
+    const firstDay = monthStart.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    
+    // Create calendar grid for this month
+    const calendarDays = [];
+    const daysInMonth = new Date(currentYear, month + 1, 0).getDate();
+    
+    // Add empty cells for days before month starts
+    for (let i = 0; i < firstDay; i++) {
+      calendarDays.push(null);
+    }
+    
+    // Add all days of the month
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateStr = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      const cellData = monthCells.find(c => c.date === dateStr);
+      calendarDays.push(cellData || { date: dateStr, count: 0 });
+    }
+    
+    // Chunk into weeks
+    const monthWeeks = [];
+    for (let i = 0; i < calendarDays.length; i += 7) {
+      monthWeeks.push(calendarDays.slice(i, i + 7));
+    }
+    
+    months.push({
+      name: monthStart.toLocaleDateString('en-US', { month: 'short' }),
+      weeks: monthWeeks,
+      hasData: monthCells.some(cell => cell.count > 0)
+    });
   }
 
   return (
     <div className="w-full overflow-x-auto">
-      <div className="flex gap-[3px] min-w-max">
-        {weeks.map((week, wi) => (
-          <div key={wi} className="flex flex-col gap-[3px]">
-            {week.map(({ date, count }) => (
-              <div
-                key={date}
-                title={`${date}: ${count} submission${count !== 1 ? 's' : ''}`}
-                className="w-[11px] h-[11px] rounded-[2px] cursor-pointer transition-transform hover:scale-125"
-                style={{ backgroundColor: heatColor(count) }}
-              />
-            ))}
+      {/* Year header */}
+      <div className="text-sm font-semibold text-slate-200 mb-4">
+        {currentYear}
+      </div>
+      
+      {/* Month sections */}
+      <div className="flex gap-4 flex-wrap">
+        {months.map((month, monthIndex) => (
+          <div key={monthIndex} className="inline-block mr-8">
+            {/* Month name */}
+            <div className="text-xs font-medium text-slate-400 mb-2">
+              {month.name}
+            </div>
+            
+            {/* Month heatmap */}
+            <div className="flex gap-[3px]">
+              {month.weeks.map((week, weekIndex) => (
+                <div key={weekIndex} className="flex flex-col gap-[3px]">
+                  {week.map((day, dayIndex) => (
+                    <div
+                      key={day?.date || `empty-${monthIndex}-${weekIndex}-${dayIndex}`}
+                      title={day ? `${day.date}: ${day.count} submission${day.count !== 1 ? 's' : ''}` : ''}
+                      className={`w-[11px] h-[11px] rounded-[2px] ${
+                        day ? 'cursor-pointer transition-transform hover:scale-125' : ''
+                      }`}
+                      style={{ 
+                        backgroundColor: day && month.hasData ? heatColor(day.count) : '#1e293b'
+                      }}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-1.5 mt-3 text-xs text-slate-500">
+      
+      {/* Legend */}
+      <div className="flex items-center gap-1.5 mt-4 text-xs text-slate-500">
         <span>Less</span>
         {['#1e293b', '#0e7490', '#0891b2', '#06b6d4', '#22d3ee'].map((c) => (
           <div key={c} className="w-[11px] h-[11px] rounded-[2px]" style={{ backgroundColor: c }} />
@@ -171,6 +246,10 @@ const PublicProfileAnalytics = ({ username }) => {
 
         if (cancelled) return;
 
+        console.log('PublicProfileAnalytics - API Response:', res.data);
+        console.log('PublicProfileAnalytics - codingStats:', res.data?.codingStats);
+        console.log('PublicProfileAnalytics - activity:', res.data?.activity);
+        
         setCodingStats(res.data?.codingStats || null);
         setActivity(res.data?.activity || []);
         setStreak(res.data?.streak || null);
@@ -269,7 +348,7 @@ const PublicProfileAnalytics = ({ username }) => {
       <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="text-sm font-semibold text-slate-200">Submission Activity</div>
-          <div className="text-xs text-slate-500">Last 365 days</div>
+          <div className="text-xs text-slate-500">Current year</div>
         </div>
         <ActivityHeatmap activity={activity} />
       </div>
