@@ -240,6 +240,19 @@ async function getPublicAnalytics(req, res, next) {
       { $group: { _id: '$problem.difficulty', count: { $sum: 1 } } }
     ]);
 
+    const totalSubAgg = await Submission.aggregate([
+      { $match: { ...matchUser, isDraft: false } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          accepted: {
+            $sum: { $cond: [{ $eq: ['$status', 'accepted'] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
     const totalProblemsAgg = await CodingProblem.aggregate([
       { $group: { _id: '$difficulty', count: { $sum: 1 } } }
     ]);
