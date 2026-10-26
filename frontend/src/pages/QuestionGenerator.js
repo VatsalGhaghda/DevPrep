@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useClerk, useUser } from '@clerk/clerk-react';
@@ -27,6 +27,10 @@ import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
+import AssessmentGate from '../components/assessment/AssessmentGate';
+import ViolationOverlay from '../components/assessment/ViolationOverlay';
+import ProctorBadge from '../components/assessment/ProctorBadge';
+import { useSecureAssessment } from '../hooks/useSecureAssessment';
 import { clerkAPI, questionsAPI } from '../services/api';
 
 /* ── constants ────────────────────────────────────────────────────────────── */
@@ -108,29 +112,18 @@ function downloadQuestionsPdf({ role, difficulty, topics, questions }) {
 
 /* ── question normalizer ──────────────────────────────────────────────────── */
 
-function normalizeGeneratedQuestions(items) {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((q, i) => {
-      const text = q && typeof q.text === 'string' ? q.text.trim() : '';
-      const options = q && Array.isArray(q.options)
-        ? q.options.filter((o) => typeof o === 'string' && o.trim())
-        : [];
-      const correctIndex = q && Number.isInteger(q.correctIndex) ? q.correctIndex : 0;
-      const topic = q && typeof q.topic === 'string' ? q.topic.trim() : '';
-      const explanation = q && typeof q.explanation === 'string' ? q.explanation.trim() : '';
-      const normalizedOptions = options.map((o) => o.trim()).slice(0, 4);
-      if (!text || normalizedOptions.length !== 4) return null;
-      return {
-        id: `${Date.now()}-${i}`,
-        text,
-        options: normalizedOptions,
-        correctIndex: correctIndex >= 0 && correctIndex <= 3 ? correctIndex : 0,
-        topic,
-        explanation
-      };
-    })
-    .filter(Boolean);
+// Questions come from a server-side quiz attempt. correctIndex and explanation
+// are only present once the attempt is submitted (the server grades it).
+function normalizeAttemptQuestions(attempt) {
+  const items = attempt && Array.isArray(attempt.questions) ? attempt.questions : [];
+  return items.map((q, i) => ({
+    id: `${attempt.id}-${i}`,
+    text: String(q.text || ''),
+    options: Array.isArray(q.options) ? q.options : [],
+    correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : null,
+    topic: String(q.topic || ''),
+    explanation: String(q.explanation || '')
+  }));
 }
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
@@ -180,6 +173,9 @@ const QuestionGenerator = () => {
   const [quizDone, setQuizDone] = useState(false);
   const [mode, setMode] = useState('settings'); // settings | quiz | submitted | review
   const [secondsLeft, setSecondsLeft] = useState(null);
+  const [attempt, setAttempt] = useState(null); // server-side quiz attempt
+  const [submitting, setSubmitting] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   /* ── saved stats state ──────────────────────────────────────────────────── */
   const [savedStats, setSavedStats] = useState(null);
@@ -236,13 +232,6 @@ const QuestionGenerator = () => {
     Array.isArray(topics) && topics.length === 1 &&
     [10, 15, 20].includes(Number(count));
 
-  const totalSeconds = useMemo(() => {
-    const c = Number(count);
-    if (![10, 15, 20].includes(c)) return null;
-    const perQ = difficulty === 'Easy' ? 30 : difficulty === 'Medium' ? 45 : difficulty === 'Hard' ? 60 : null;
-    return perQ ? c * perQ : null;
-  }, [count, difficulty]);
-
   const avatarUrl = (dbProfile && dbProfile.avatar) || user?.imageUrl || '';
 
   /* ── effects ────────────────────────────────────────────────────────────── */
@@ -279,27 +268,111 @@ const QuestionGenerator = () => {
     setTopics((prev) => prev.filter((t) => availableTopics.includes(t)));
   }, [availableTopics]);
 
-  // Timer countdown
+  /* ── quiz attempt + secure assessment ───────────────────────────────────── */
+
+  const applyAttempt = useCallback((att) => {
+    setAttempt(att);
+    setQuestions(normalizeAttemptQuestions(att));
+  }, []);
+
+  const reportViolation = useCallback(async (type, details) => {
+    const token = await getToken();
+    const res = await questionsAPI.logViolation(token, attempt.id, { type, details });
+    return res.data;
+  }, [getToken, attempt?.id]);
+
+  const refreshAttempt = useCallback(async () => {
+    if (!attempt?.id) return;
+    try {
+      const token = await getToken();
+      const res = await questionsAPI.getAttempt(token, attempt.id);
+      if (res.data?.attempt) applyAttempt(res.data.attempt);
+    } catch (_) { /* ignore */ }
+  }, [getToken, attempt?.id, applyAttempt]);
+
+  const secure = useSecureAssessment({
+    enabled: mode === 'quiz' && ['ready', 'active'].includes(attempt?.status),
+    security: attempt?.security,
+    report: reportViolation,
+    onTerminated: refreshAttempt
+  });
+
+  const quizStarted = attempt?.status === 'active';
+
+  // Timer: derived from the server's expiresAt so it can't be paused client-side
   useEffect(() => {
-    if (mode !== 'quiz' || !Number.isFinite(secondsLeft) || secondsLeft <= 0) return;
-    const t = setInterval(() => {
-      setSecondsLeft((prev) => {
-        const next = Number(prev) - 1;
-        return next <= 0 ? 0 : next;
-      });
-    }, 1000);
+    if (mode !== 'quiz' || !quizStarted || !attempt?.expiresAt) return undefined;
+    const end = new Date(attempt.expiresAt).getTime();
+    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+    tick();
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [mode, secondsLeft]);
+  }, [mode, quizStarted, attempt?.expiresAt]);
+
+  const submitQuiz = useCallback(async (answers) => {
+    if (submitting || !attempt?.id) return;
+    setSubmitting(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await questionsAPI.submitAttempt(token, attempt.id, answers);
+      const graded = res.data?.attempt;
+      applyAttempt(graded);
+      if (Array.isArray(graded?.answers)) setQuizAnswers(graded.answers);
+      setQuizIndex(0);
+      setQuizDone(true);
+      setMode('submitted');
+    } catch (err) {
+      const current = err?.response?.data?.attempt;
+      if (current) applyAttempt(current);
+      const msg = err?.response?.data?.message || err?.message || 'Failed to submit quiz';
+      toast.error(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [submitting, attempt?.id, getToken, applyAttempt]);
 
   // Auto-submit when time runs out
   useEffect(() => {
-    if (mode !== 'quiz') return;
-    if (secondsLeft === 0 && questions.length && !quizDone) {
-      setQuizDone(true);
-      setMode('submitted');
-      toast.info("Time's up — quiz submitted");
+    if (mode !== 'quiz' || !quizStarted) return;
+    if (secondsLeft === 0 && questions.length && !quizDone && !submitting) {
+      toast.info("Time's up — submitting quiz");
+      submitQuiz(quizAnswers);
     }
-  }, [mode, secondsLeft, questions.length, quizDone]);
+  }, [mode, quizStarted, secondsLeft, questions.length, quizDone, submitting, submitQuiz, quizAnswers]);
+
+  // Starts the server timer. Called from the rules screen (a click), so
+  // fullscreen is requested first while the click still counts as a gesture.
+  const onStartQuiz = useCallback(async (att = attempt) => {
+    if (!att?.id || starting) return;
+    setStarting(true);
+    try {
+      if (att.security?.policy?.enabled) await secure.arm();
+      if (att.status === 'ready') {
+        const token = await getToken();
+        if (!token) throw new Error('Not authenticated');
+        const res = await questionsAPI.startAttempt(token, att.id);
+        applyAttempt(res.data.attempt);
+      }
+    } catch (err) {
+      secure.release();
+      const msg = err?.response?.data?.message || err?.message || 'Failed to start quiz';
+      toast.error(msg);
+    } finally {
+      setStarting(false);
+    }
+  }, [attempt, starting, secure, getToken, applyAttempt]);
+
+  // Fresh attempt in quiz mode: start straight away when it isn't proctored
+  const enterQuiz = (att) => {
+    applyAttempt(att);
+    setQuizIndex(0);
+    setQuizAnswers(Array.from({ length: att.questions.length }).fill(null));
+    setQuizDone(false);
+    setSecondsLeft(att.timeLimitSec);
+    setMode('quiz');
+    if (!att.security?.policy?.enabled) onStartQuiz(att);
+  };
 
   // Close role dropdown on outside click
   useEffect(() => {
@@ -329,31 +402,18 @@ const QuestionGenerator = () => {
     try {
 
       const res = await questionsAPI.generate(token, payload);
-      const normalized = normalizeGeneratedQuestions(res.data?.questions || []);
-      if (!normalized.length) throw new Error('No questions returned');
+      const att = res.data?.attempt;
+      if (!att || !Array.isArray(att.questions) || !att.questions.length) throw new Error('No questions returned');
 
-      setQuestions(normalized);
-      setQuizIndex(0);
-      setQuizAnswers(Array.from({ length: normalized.length }).fill(null));
-      setQuizDone(false);
       setHasSaved(false); // They haven't explicitly saved/downloaded yet
-      setMode('quiz');
-      setSecondsLeft(totalSeconds || normalized.length * 45);
+      enterQuiz(att);
       toast.success('Questions generated');
 
-      // Auto-save to DB in background so it appears in Recent Quizzes immediately
+      // The server already added these questions to Recent Quizzes
       try {
-        await questionsAPI.save(token, {
-          role: role.trim(),
-          difficulty,
-          topics,
-          questions: normalized
-        });
         const statsRes = await questionsAPI.getSavedStats(token);
         setSavedStats(statsRes.data || null);
-      } catch (err) {
-        console.error('Auto-save failed:', err);
-      }
+      } catch (_) { /* ignore */ }
 
     } catch (err) {
       const status = err?.response?.status;
@@ -407,7 +467,29 @@ const QuestionGenerator = () => {
     }
   };
 
-  const onExitQuiz = () => {
+  const onRetakeQuiz = async () => {
+    if (!attempt?.id) return;
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await questionsAPI.retakeAttempt(token, attempt.id);
+      enterQuiz(res.data.attempt);
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Failed to retake quiz';
+      toast.error(msg);
+    }
+  };
+
+  const onExitQuiz = async () => {
+    secure.release();
+    // Leaving mid-quiz abandons the attempt on the server
+    if (attempt?.id && ['ready', 'active'].includes(attempt.status)) {
+      try {
+        const token = await getToken();
+        if (token) await questionsAPI.abandonAttempt(token, attempt.id);
+      } catch (_) { /* ignore */ }
+    }
+    setAttempt(null);
     setMode('settings');
     setQuizDone(false);
     setQuizIndex(0);
@@ -419,13 +501,13 @@ const QuestionGenerator = () => {
 
   /* ── quiz helpers ───────────────────────────────────────────────────────── */
 
+  // Score comes from the server's grading of the attempt
   const quizScore = useMemo(() => {
-    if (!questions.length) return { correct: 0, answered: 0, total: 0, pct: 0 };
     const answered = quizAnswers.filter((a) => a !== null && a !== undefined).length;
-    const correct = questions.reduce((acc, q, i) => acc + (quizAnswers[i] === q.correctIndex ? 1 : 0), 0);
-    const pct = Math.round((correct / questions.length) * 100);
-    return { correct, answered, total: questions.length, pct };
-  }, [questions, quizAnswers]);
+    const s = attempt?.score;
+    if (!s) return { correct: 0, answered, total: questions.length, pct: 0 };
+    return { correct: s.correct, answered, total: s.total, pct: s.pct };
+  }, [attempt?.score, questions.length, quizAnswers]);
 
   const scoreColor = quizScore.pct >= 70 ? '#34d399' : quizScore.pct >= 40 ? '#fbbf24' : '#f87171';
 
@@ -478,31 +560,36 @@ const QuestionGenerator = () => {
       <div className="relative z-10 min-h-screen p-4 lg:p-8">
         <div className="mx-auto w-full max-w-[1600px]">
           <div className="flex gap-5">
-            <Sidebar
-              openMobile={mobileSidebarOpen}
-              onCloseMobile={() => setMobileSidebarOpen(false)}
-              collapsed={sidebarCollapsed}
-              onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-              items={sidebarItems}
-              onNavigate={safeNavigate}
-              profile={{ name: displayName, avatar: avatarUrl }}
-              profilePath="/profile"
-            />
+            {/* Navigation is hidden while a proctored quiz is running */}
+            {!secure.running && (
+              <Sidebar
+                openMobile={mobileSidebarOpen}
+                onCloseMobile={() => setMobileSidebarOpen(false)}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+                items={sidebarItems}
+                onNavigate={safeNavigate}
+                profile={{ name: displayName, avatar: avatarUrl }}
+                profilePath="/profile"
+              />
+            )}
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <Navbar
-                    brand=""
-                    activeLabel="Questions"
-                    links={navbarLinks}
-                    onNavigate={safeNavigate}
-                    onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-                    avatarUrl={avatarUrl}
-                    onLogout={() => setConfirmLogoutOpen(true)}
-                  />
+              {!secure.running && (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <Navbar
+                      brand=""
+                      activeLabel="Questions"
+                      links={navbarLinks}
+                      onNavigate={safeNavigate}
+                      onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+                      avatarUrl={avatarUrl}
+                      onLogout={() => setConfirmLogoutOpen(true)}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
@@ -774,6 +861,7 @@ const QuestionGenerator = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {mode === 'quiz' && <ProctorBadge security={secure.security} className="h-10" />}
                           {mode === 'quiz' && (
                             <div className={`px-3 h-10 rounded-xl border inline-flex items-center gap-2 text-sm font-medium ${timerClasses}`}>
                               <Clock className="w-4 h-4" />
@@ -804,8 +892,46 @@ const QuestionGenerator = () => {
                     </div>
 
                     <div className="p-5 sm:p-6">
+                      {/* ── Not started / terminated: questions stay hidden ── */}
+                      {mode === 'quiz' && !quizStarted && (
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-8 text-center">
+                          {attempt?.status === 'terminated' ? (
+                            <>
+                              <XCircle className="w-8 h-8 text-rose-400 mx-auto" />
+                              <p className="mt-3 text-sm text-rose-200">
+                                This quiz was terminated after {attempt.security?.violationCount} assessment violations. It was not scored.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={onExitQuiz}
+                                className="mt-4 h-10 px-5 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200 text-sm"
+                              >
+                                Back to quiz settings
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-8 h-8 text-violet-300 mx-auto" />
+                              <p className="mt-3 text-sm text-slate-300">
+                                {questions.length} questions • {formatTime(attempt?.timeLimitSec)}. The timer starts when you begin.
+                              </p>
+                              {!secure.needsGate && (
+                                <button
+                                  type="button"
+                                  onClick={() => onStartQuiz()}
+                                  disabled={starting}
+                                  className="mt-4 h-10 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white text-sm font-semibold disabled:opacity-50"
+                                >
+                                  {starting ? 'Starting…' : 'Start Quiz'}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+
                       {/* ── QUIZ mode ── */}
-                      {mode === 'quiz' && questions.length > 0 && !quizDone && (() => {
+                      {mode === 'quiz' && quizStarted && questions.length > 0 && !quizDone && (() => {
                         const q = questions[quizIndex];
                         const selected = quizAnswers[quizIndex];
                         return (
@@ -865,16 +991,15 @@ const QuestionGenerator = () => {
                                   type="button"
                                   onClick={() => {
                                     if (quizIndex + 1 >= questions.length) {
-                                      setQuizDone(true);
-                                      setMode('submitted');
+                                      submitQuiz(quizAnswers);
                                       return;
                                     }
                                     setQuizIndex((v) => Math.min(questions.length - 1, v + 1));
                                   }}
-                                  disabled={selected === null || selected === undefined}
+                                  disabled={selected === null || selected === undefined || submitting}
                                   className="h-11 px-8 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 shadow-[0_0_20px_rgba(139,92,246,0.2)] hover:shadow-[0_0_30px_rgba(139,92,246,0.35)]"
                                 >
-                                  {quizIndex + 1 >= questions.length ? 'Submit Quiz' : 'Next'}
+                                  {quizIndex + 1 >= questions.length ? (submitting ? 'Submitting…' : 'Submit Quiz') : 'Next'}
                                   {quizIndex + 1 < questions.length && <ArrowRight className="w-4 h-4 ml-1 inline" />}
                                 </button>
                               </div>
@@ -914,6 +1039,15 @@ const QuestionGenerator = () => {
                               <span className="mx-2 text-slate-500">•</span>
                               Answered: {quizScore.answered} / {quizScore.total}
                             </div>
+                            {attempt?.late && (
+                              <div className="mt-1 text-xs text-amber-300">Submitted after the time limit</div>
+                            )}
+                            {attempt?.security?.violationCount > 0 && (
+                              <div className="mt-1 text-xs text-amber-300">
+                                {attempt.security.violationCount} assessment violation{attempt.security.violationCount === 1 ? '' : 's'} recorded
+                                {attempt.security.flagged ? ' — flagged for review' : ''}
+                              </div>
+                            )}
                           </div>
 
                           {/* Action buttons */}
@@ -928,13 +1062,7 @@ const QuestionGenerator = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setQuizAnswers(Array.from({ length: questions.length }).fill(null));
-                                setQuizIndex(0);
-                                setQuizDone(false);
-                                setMode('quiz');
-                                setSecondsLeft(totalSeconds || questions.length * 45);
-                              }}
+                              onClick={onRetakeQuiz}
                               className="h-11 px-5 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200 inline-flex items-center justify-center gap-2 transition-colors"
                             >
                               <RotateCcw className="w-4 h-4" />
@@ -1078,6 +1206,26 @@ const QuestionGenerator = () => {
           </div>
         </div>
       </div>
+
+      <AssessmentGate
+        open={mode === 'quiz' && secure.needsGate}
+        title="Proctored Quiz"
+        subtitle={attempt ? `${attempt.role} • ${attempt.difficulty} • ${questions.length} questions • ${formatTime(attempt.timeLimitSec)}` : ''}
+        security={secure.security}
+        starting={starting}
+        startLabel="I Understand — Start Quiz"
+        onStart={() => onStartQuiz()}
+        onCancel={onExitQuiz}
+        cancelLabel="Cancel Quiz"
+      />
+
+      <ViolationOverlay
+        secure={secure}
+        terminatedTitle="Quiz terminated"
+        terminatedMessage="This quiz was ended because the violation limit was reached. It will not be scored; the violation log is kept."
+        terminatedActionLabel="Back to quiz settings"
+        onTerminatedAction={onExitQuiz}
+      />
 
       {/* Logout modal */}
       <Modal open={confirmLogoutOpen} onClose={() => setConfirmLogoutOpen(false)}>

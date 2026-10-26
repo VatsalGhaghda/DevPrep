@@ -5,6 +5,7 @@ const Resume = require('../models/Resume');
 const User = require('../models/User');
 const { upsertUserFromClerkApi, getClerkUserIdFromAuth } = require('./clerkSyncController');
 const { groqChat } = require('../utils/aiService');
+const { buildSecurityPolicy, recordViolation, securitySummary } = require('../utils/assessmentSecurity');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -244,6 +245,7 @@ async function startSession(req, res, next) {
       startedAt: new Date(),
       currentQuestionNumber: 1,
       messages: [],
+      securityPolicy: buildSecurityPolicy(),
     });
 
     // Generate first interviewer message
@@ -421,7 +423,7 @@ async function getHistory(req, res, next) {
 
     const sessions = await MockInterviewSession.find({ userId: user._id })
       .select(
-        'interviewType role difficulty duration status startedAt endedAt currentQuestionNumber evaluation.overallScore evaluation.summary createdAt'
+        'interviewType role difficulty duration status startedAt endedAt currentQuestionNumber evaluation.overallScore evaluation.summary createdAt violationCount flagged terminationReason'
       )
       .sort({ createdAt: -1 })
       .limit(50);
@@ -432,4 +434,35 @@ async function getHistory(req, res, next) {
   }
 }
 
-module.exports = { startSession, getSession, sendMessage, endSession, getHistory };
+async function logViolation(req, res, next) {
+  try {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ message: 'Not authorized' });
+
+    const session = await MockInterviewSession.findById(req.params.id);
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+
+    if (String(session.userId) !== String(user._id)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    if (session.status !== 'active') {
+      return res.status(409).json({ message: 'Interview session is not active', security: securitySummary(session) });
+    }
+
+    const { type, details } = req.body;
+    const { shouldTerminate } = recordViolation(session, { type, details });
+    if (shouldTerminate) {
+      // Terminated sessions get no evaluation; the transcript and audit log remain.
+      session.status = 'abandoned';
+      session.endedAt = new Date();
+    }
+    await session.save();
+
+    return res.status(200).json({ security: securitySummary(session), status: session.status });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { startSession, getSession, sendMessage, endSession, getHistory, logViolation };

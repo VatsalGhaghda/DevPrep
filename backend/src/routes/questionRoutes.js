@@ -1,10 +1,21 @@
 const express = require('express');
-const { body } = require('express-validator');
+const { body, param } = require('express-validator');
 
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
 const { questionGenerationLimiter } = require('../middleware/rateLimiters');
-const { generateQuestions, saveQuestions, getSavedStats } = require('../controllers/questionController');
+const { VIOLATION_TYPES } = require('../utils/assessmentSecurity');
+const {
+  generateQuestions,
+  saveQuestions,
+  getSavedStats,
+  getAttempt,
+  startAttempt,
+  submitAttempt,
+  abandonAttempt,
+  retakeAttempt,
+  logAttemptViolation
+} = require('../controllers/questionController');
 
 const router = express.Router();
 
@@ -37,5 +48,40 @@ router.post(
 );
 
 router.get('/saved/stats', clerkAuthMiddleware(), getSavedStats);
+
+/* ── Quiz attempts ── */
+
+const attemptId = param('id').isMongoId().withMessage('Invalid attempt id');
+
+router.get('/attempts/:id', clerkAuthMiddleware(), [attemptId], validateRequest, getAttempt);
+
+router.post('/attempts/:id/start', clerkAuthMiddleware(), [attemptId], validateRequest, startAttempt);
+
+router.post(
+  '/attempts/:id/submit',
+  clerkAuthMiddleware(),
+  [
+    attemptId,
+    body('answers').isArray({ max: 50 }).withMessage('answers must be an array')
+  ],
+  validateRequest,
+  submitAttempt
+);
+
+router.post('/attempts/:id/abandon', clerkAuthMiddleware(), [attemptId], validateRequest, abandonAttempt);
+
+router.post('/attempts/:id/retake', clerkAuthMiddleware(), [attemptId], validateRequest, retakeAttempt);
+
+router.post(
+  '/attempts/:id/violations',
+  clerkAuthMiddleware(),
+  [
+    attemptId,
+    body('type').isIn(VIOLATION_TYPES).withMessage('Invalid violation type'),
+    body('details').optional().isString().isLength({ max: 200 }).withMessage('details must be a short string')
+  ],
+  validateRequest,
+  logAttemptViolation
+);
 
 module.exports = router;

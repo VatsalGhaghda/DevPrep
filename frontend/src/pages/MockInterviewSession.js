@@ -28,6 +28,10 @@ import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackgr
 import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Modal from '../components/ui/Modal';
+import AssessmentGate from '../components/assessment/AssessmentGate';
+import ViolationOverlay from '../components/assessment/ViolationOverlay';
+import ProctorBadge from '../components/assessment/ProctorBadge';
+import { useSecureAssessment, securityFromDoc } from '../hooks/useSecureAssessment';
 import { clerkAPI, mockInterviewAPI } from '../services/api';
 
 const MockInterviewSession = () => {
@@ -125,6 +129,27 @@ const MockInterviewSession = () => {
 
   useEffect(() => { fetchSession(); }, [fetchSession]);
 
+  /* ── secure assessment ── */
+  const sessionSecurity = useMemo(
+    () => securityFromDoc(session),
+    // Only the security fields matter; the session object changes on every message
+    [session?.securityPolicy, session?.violationCount, session?.flagged, session?.terminationReason]
+  );
+  const isTerminated = session?.terminationReason === 'violations';
+
+  const reportViolation = useCallback(async (type, details) => {
+    const token = await getToken();
+    const res = await mockInterviewAPI.logViolation(token, sessionId, { type, details });
+    return res.data;
+  }, [getToken, sessionId]);
+
+  const secure = useSecureAssessment({
+    enabled: isActive,
+    security: sessionSecurity,
+    report: reportViolation,
+    onTerminated: fetchSession
+  });
+
   const endInterviewRef = useRef(null);
 
   // Timer
@@ -211,6 +236,7 @@ const MockInterviewSession = () => {
     if (ending) return;
     setEnding(true);
     setEndModalOpen(false);
+    secure.release();
     try {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
@@ -255,31 +281,36 @@ const MockInterviewSession = () => {
       <div className="relative z-10 min-h-screen p-4 lg:p-8">
         <div className="mx-auto w-full max-w-[1600px]">
           <div className="flex gap-5">
-            <Sidebar
-              openMobile={mobileSidebarOpen}
-              onCloseMobile={() => setMobileSidebarOpen(false)}
-              collapsed={sidebarCollapsed}
-              onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-              items={sidebarItems}
-              onNavigate={safeNavigate}
-              profile={{ name: displayName, avatar: avatarUrl }}
-              profilePath="/profile"
-            />
+            {/* Navigation is hidden while a proctored interview is running */}
+            {!secure.running && (
+              <Sidebar
+                openMobile={mobileSidebarOpen}
+                onCloseMobile={() => setMobileSidebarOpen(false)}
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+                items={sidebarItems}
+                onNavigate={safeNavigate}
+                profile={{ name: displayName, avatar: avatarUrl }}
+                profilePath="/profile"
+              />
+            )}
 
             <div className="flex-1 min-w-0 flex flex-col">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <Navbar
-                    brand=""
-                    activeLabel="Mock Interview"
-                    links={navbarLinks}
-                    onNavigate={safeNavigate}
-                    onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-                    avatarUrl={avatarUrl}
-                    onLogout={() => setConfirmLogoutOpen(true)}
-                  />
+              {!secure.running && (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <Navbar
+                      brand=""
+                      activeLabel="Mock Interview"
+                      links={navbarLinks}
+                      onNavigate={safeNavigate}
+                      onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+                      avatarUrl={avatarUrl}
+                      onLogout={() => setConfirmLogoutOpen(true)}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Loading state */}
               {loading && (
@@ -316,13 +347,15 @@ const MockInterviewSession = () => {
                   {/* Session header */}
                   <div className="rounded-2xl border border-white/10 bg-[#1e1e2d]/60 backdrop-blur-xl p-4 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => navigate('/interview/mock')}
-                        className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center justify-center"
-                      >
-                        <ArrowLeft className="w-4 h-4 text-slate-300" />
-                      </button>
+                      {!secure.running && (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/interview/mock')}
+                          className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex items-center justify-center"
+                        >
+                          <ArrowLeft className="w-4 h-4 text-slate-300" />
+                        </button>
+                      )}
                       <div>
                         <div className="text-sm font-semibold text-slate-100 capitalize">
                           {session.interviewType} Interview • {session.role}
@@ -336,6 +369,8 @@ const MockInterviewSession = () => {
                     <div className="flex items-center gap-2">
                       {isActive && (
                         <>
+                          <ProctorBadge security={secure.security} />
+
                           {/* Timer */}
                           <div className={`px-3 h-9 rounded-xl border inline-flex items-center gap-2 text-sm font-medium ${
                             timeLeft != null && timeLeft < 60
@@ -369,9 +404,13 @@ const MockInterviewSession = () => {
 
                       {!isActive && (
                         <div className={`px-3 h-9 rounded-xl border inline-flex items-center text-sm font-semibold capitalize ${
-                          isCompleted ? 'bg-emerald-600/15 border-emerald-400/30 text-emerald-300' : 'bg-slate-600/15 border-slate-400/30 text-slate-300'
+                          isCompleted
+                            ? 'bg-emerald-600/15 border-emerald-400/30 text-emerald-300'
+                            : isTerminated
+                              ? 'bg-rose-600/15 border-rose-400/30 text-rose-300'
+                              : 'bg-slate-600/15 border-slate-400/30 text-slate-300'
                         }`}>
-                          {session.status}
+                          {isTerminated ? 'Terminated' : session.status}
                         </div>
                       )}
                     </div>
@@ -467,8 +506,10 @@ const MockInterviewSession = () => {
                     {/* Read-only notice for completed sessions */}
                     {!isActive && !evaluation && (
                       <div className="border-t border-white/10 p-3">
-                        <div className="text-center text-xs text-slate-500 py-2">
-                          This interview session has ended. The transcript is read-only.
+                        <div className={`text-center text-xs py-2 ${isTerminated ? 'text-rose-300' : 'text-slate-500'}`}>
+                          {isTerminated
+                            ? `This interview was terminated after ${session.violationCount} assessment violations. No evaluation was generated. The transcript is read-only.`
+                            : 'This interview session has ended. The transcript is read-only.'}
                         </div>
                       </div>
                     )}
@@ -655,6 +696,23 @@ const MockInterviewSession = () => {
           </div>
         </div>
       </div>
+
+      <AssessmentGate
+        open={!loading && !error && secure.needsGate}
+        title="Proctored Interview"
+        subtitle={session ? `${session.interviewType} interview • ${session.role} • ${session.duration} min` : ''}
+        security={secure.security}
+        onStart={secure.arm}
+        onCancel={() => navigate('/interview/mock')}
+        cancelLabel="Back to Setup"
+      />
+
+      <ViolationOverlay
+        secure={secure}
+        terminatedTitle="Interview terminated"
+        terminatedMessage="This interview was ended because the violation limit was reached. No evaluation will be generated; the transcript and violation log are kept."
+        terminatedActionLabel="View transcript"
+      />
 
       {/* End interview confirmation modal */}
       <Modal open={endModalOpen} onClose={() => setEndModalOpen(false)}>

@@ -64,7 +64,19 @@ export const questionsAPI = {
   save: (clerkToken, payload) =>
     api.post('/questions/save', payload, { headers: { Authorization: `Bearer ${clerkToken}` } }),
   getSavedStats: (clerkToken) =>
-    api.get('/questions/saved/stats', { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.get('/questions/saved/stats', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  getAttempt: (clerkToken, attemptId) =>
+    api.get(`/questions/attempts/${attemptId}`, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  startAttempt: (clerkToken, attemptId) =>
+    api.post(`/questions/attempts/${attemptId}/start`, {}, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  submitAttempt: (clerkToken, attemptId, answers) =>
+    api.post(`/questions/attempts/${attemptId}/submit`, { answers }, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  abandonAttempt: (clerkToken, attemptId) =>
+    api.post(`/questions/attempts/${attemptId}/abandon`, {}, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  retakeAttempt: (clerkToken, attemptId) =>
+    api.post(`/questions/attempts/${attemptId}/retake`, {}, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  logViolation: (clerkToken, attemptId, payload) =>
+    api.post(`/questions/attempts/${attemptId}/violations`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } })
 };
 
 /* ── Mock Interview ── */
@@ -78,7 +90,9 @@ export const mockInterviewAPI = {
   endSession: (clerkToken, sessionId, status = 'completed') =>
     api.post(`/mock-interviews/${sessionId}/end`, { status }, { headers: { Authorization: `Bearer ${clerkToken}` } }),
   getHistory: (clerkToken) =>
-    api.get('/mock-interviews/history', { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.get('/mock-interviews/history', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  logViolation: (clerkToken, sessionId, payload) =>
+    api.post(`/mock-interviews/${sessionId}/violations`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } })
 };
 
 /* ── Resume ── */
@@ -106,7 +120,11 @@ export const codingAPI = {
   saveDraft: (clerkToken, id, payload) =>
     api.post(`/coding/problems/${id}/save-draft`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } }),
   getStatus: (clerkToken, id) =>
-    api.get(`/coding/problems/${id}/status`, { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.get(`/coding/problems/${id}/status`, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  startAttempt: (clerkToken, id) =>
+    api.post(`/coding/problems/${id}/attempts`, {}, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  logViolation: (clerkToken, attemptId, payload) =>
+    api.post(`/coding/attempts/${attemptId}/violations`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } })
 };
 
 /* ── Analytics ── */

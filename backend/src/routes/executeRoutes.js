@@ -5,9 +5,11 @@ const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
 const { executionLimiter } = require('../middleware/executionLimiter');
 const CodingProblem = require('../models/CodingProblem');
+const CodingAttempt = require('../models/CodingAttempt');
 const Submission = require('../models/Submission');
 const User = require('../models/User');
 const { executeCode, runAgainstTestCases } = require('../utils/judgeService');
+const { requireActiveAttempt } = require('../controllers/codingController');
 
 const router = express.Router();
 const clerkAuth = clerkAuthMiddleware();
@@ -59,14 +61,15 @@ router.post(
   clerkAuth,
   executionLimiter,
   [
-    body('problemId').trim().notEmpty().withMessage('Problem ID is required'),
+    body('problemId').isMongoId().withMessage('A valid problem ID is required'),
     body('code').trim().notEmpty().withMessage('Code is required'),
-    body('language').optional().isString().withMessage('Language must be a string')
+    body('language').optional().isString().withMessage('Language must be a string'),
+    body('attemptId').isMongoId().withMessage('A valid attemptId is required')
   ],
   validateRequest,
   async (req, res, next) => {
     try {
-      const { problemId, code, language = 'python' } = req.body;
+      const { problemId, code, language = 'python', attemptId } = req.body;
 
       // Fetch problem with all test cases (including hidden)
       const problem = await CodingProblem.findById(problemId).lean();
@@ -74,6 +77,15 @@ router.post(
         res.status(404);
         throw new Error('Problem not found');
       }
+
+      // Same proctoring rule as /api/coding/problems/:id/submit
+      const user = await resolveUser(req);
+      if (!user) {
+        res.status(401);
+        throw new Error('Not authorized');
+      }
+      const attempt = await requireActiveAttempt(req, res, { user, problemId: problem._id, attemptId });
+      if (!attempt) return;
 
       const allTests = problem.testCases || [];
       if (!allTests.length) {
@@ -100,40 +112,46 @@ router.post(
         'Error';
 
       // Save submission to DB
-      const user = await resolveUser(req);
-      if (user) {
-        await Submission.create({
-          userId: user._id,
-          clerkUserId: user.clerkUserId || '',
-          problemId: problem._id,
-          language,
-          code,
-          status: overallStatus,
-          passedTests: passedCount,
-          totalTests: totalCount,
-          runtime: results[0]?.time || '0',
-          memory: '0',
-          errorOutput:
-            results.find((r) => r.stderr || r.compileOutput)?.stderr ||
-            results.find((r) => r.compileOutput)?.compileOutput || '',
-          isDraft: false
-        });
+      await CodingAttempt.updateOne(
+        { _id: attempt._id },
+        {
+          $inc: { submissionCount: 1 },
+          $set: { lastActivityAt: new Date(), ...(overallStatus === 'accepted' ? { accepted: true } : {}) }
+        }
+      );
 
-        // Update problem stats atomically (same fix as codingController.js)
-        const prevTotal = problem.totalSubmissions || 0;
-        const prevAccepted = problem.totalAccepted || 0;
-        const newTotal = prevTotal + 1;
-        const newAccepted = prevAccepted + (overallStatus === 'accepted' ? 1 : 0);
-        const newAcceptanceRate = newTotal > 0 ? Math.round((newAccepted / newTotal) * 100) : 0;
+      await Submission.create({
+        userId: user._id,
+        clerkUserId: user.clerkUserId || '',
+        problemId: problem._id,
+        attemptId: attempt._id,
+        language,
+        code,
+        status: overallStatus,
+        passedTests: passedCount,
+        totalTests: totalCount,
+        runtime: results[0]?.time || '0',
+        memory: '0',
+        errorOutput:
+          results.find((r) => r.stderr || r.compileOutput)?.stderr ||
+          results.find((r) => r.compileOutput)?.compileOutput || '',
+        isDraft: false
+      });
 
-        await CodingProblem.findByIdAndUpdate(problem._id, {
-          $inc: {
-            totalSubmissions: 1,
-            totalAccepted: overallStatus === 'accepted' ? 1 : 0
-          },
-          acceptanceRate: newAcceptanceRate
-        });
-      }
+      // Update problem stats atomically (same fix as codingController.js)
+      const prevTotal = problem.totalSubmissions || 0;
+      const prevAccepted = problem.totalAccepted || 0;
+      const newTotal = prevTotal + 1;
+      const newAccepted = prevAccepted + (overallStatus === 'accepted' ? 1 : 0);
+      const newAcceptanceRate = newTotal > 0 ? Math.round((newAccepted / newTotal) * 100) : 0;
+
+      await CodingProblem.findByIdAndUpdate(problem._id, {
+        $inc: {
+          totalSubmissions: 1,
+          totalAccepted: overallStatus === 'accepted' ? 1 : 0
+        },
+        acceptanceRate: newAcceptanceRate
+      });
 
       // Return result — do NOT expose hidden test case inputs
       const safeResults = results.map((r, i) => {

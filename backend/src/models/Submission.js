@@ -19,6 +19,14 @@ const submissionSchema = new mongoose.Schema(
       required: true,
       index: true
     },
+    // Proctored attempt this submission was made in (null for drafts and
+    // submissions made before attempts existed)
+    attemptId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'CodingAttempt',
+      default: null,
+      index: true
+    },
     language: {
       type: String,
       required: true,

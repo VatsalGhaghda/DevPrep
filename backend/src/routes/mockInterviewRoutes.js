@@ -4,12 +4,14 @@ const { body, param } = require('express-validator');
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
 const { mockInterviewStartLimiter, mockInterviewMessageLimiter } = require('../middleware/rateLimiters');
+const { VIOLATION_TYPES } = require('../utils/assessmentSecurity');
 const {
   startSession,
   getSession,
   sendMessage,
   endSession,
-  getHistory
+  getHistory,
+  logViolation
 } = require('../controllers/mockInterviewController');
 
 const router = express.Router();
@@ -69,6 +71,17 @@ router.post(
   ],
   validateRequest,
   endSession
+);
+
+router.post(
+  '/:id/violations',
+  [
+    param('id').isMongoId().withMessage('Invalid session id'),
+    body('type').isIn(VIOLATION_TYPES).withMessage('Invalid violation type'),
+    body('details').optional().isString().isLength({ max: 200 }).withMessage('details must be a short string')
+  ],
+  validateRequest,
+  logViolation
 );
 
 module.exports = router;

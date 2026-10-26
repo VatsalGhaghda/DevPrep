@@ -3,13 +3,16 @@ const { body, param, query } = require('express-validator');
 
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
+const { VIOLATION_TYPES } = require('../utils/assessmentSecurity');
 const {
   listProblems,
   getProblem,
   submitSolution,
   runCode,
   saveDraft,
-  getUserStatus
+  getUserStatus,
+  startAttempt,
+  logAttemptViolation
 } = require('../controllers/codingController');
 
 const router = express.Router();
@@ -46,7 +49,8 @@ router.post(
   [
     param('id').isMongoId().withMessage('Invalid id'),
     body('language').optional().isString().withMessage('Language must be a string'),
-    body('code').trim().notEmpty().withMessage('Code is required')
+    body('code').trim().notEmpty().withMessage('Code is required'),
+    body('attemptId').isMongoId().withMessage('A valid attemptId is required')
   ],
   validateRequest,
   submitSolution
@@ -59,10 +63,31 @@ router.post(
     param('id').isMongoId().withMessage('Invalid id'),
     body('language').optional().isString().withMessage('Language must be a string'),
     body('code').trim().notEmpty().withMessage('Code is required'),
-    body('customInput').optional().isString().withMessage('Input must be a string')
+    body('customInput').optional().isString().withMessage('Input must be a string'),
+    body('attemptId').isMongoId().withMessage('A valid attemptId is required')
   ],
   validateRequest,
   runCode
+);
+
+router.post(
+  '/problems/:id/attempts',
+  clerkAuth,
+  [param('id').isMongoId().withMessage('Invalid id')],
+  validateRequest,
+  startAttempt
+);
+
+router.post(
+  '/attempts/:attemptId/violations',
+  clerkAuth,
+  [
+    param('attemptId').isMongoId().withMessage('Invalid attempt id'),
+    body('type').isIn(VIOLATION_TYPES).withMessage('Invalid violation type'),
+    body('details').optional().isString().isLength({ max: 200 }).withMessage('details must be a short string')
+  ],
+  validateRequest,
+  logAttemptViolation
 );
 
 router.post(

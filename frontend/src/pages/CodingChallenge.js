@@ -29,6 +29,10 @@ import {
   Code2,
   ExternalLink
 } from 'lucide-react';
+import AssessmentGate from '../components/assessment/AssessmentGate';
+import ViolationOverlay from '../components/assessment/ViolationOverlay';
+import ProctorBadge from '../components/assessment/ProctorBadge';
+import { useSecureAssessment } from '../hooks/useSecureAssessment';
 import { codingAPI } from '../services/api';
 
 const LANGUAGES = [
@@ -91,6 +95,47 @@ const CodingChallenge = () => {
   const editorRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
 
+  // Proctored attempt that runs and submissions belong to
+  const [attempt, setAttempt] = useState(null);
+  const [attemptError, setAttemptError] = useState('');
+
+  const startAttempt = useCallback(async () => {
+    setAttemptError('');
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await codingAPI.startAttempt(token, id);
+      setAttempt(res.data.attempt);
+    } catch (err) {
+      setAttemptError(err.response?.data?.message || 'Failed to start an attempt');
+    }
+  }, [getToken, id]);
+
+  const reportViolation = useCallback(async (type, details) => {
+    const token = await getToken();
+    const res = await codingAPI.logViolation(token, attempt.id, { type, details });
+    return res.data;
+  }, [getToken, attempt?.id]);
+
+  const secure = useSecureAssessment({
+    enabled: attempt?.status === 'active',
+    security: attempt?.security,
+    report: reportViolation,
+    onTerminated: (data) => setAttempt((prev) => (prev ? { ...prev, status: 'terminated', security: data.security } : prev))
+  });
+
+  // Server refused a run/submit because the attempt is no longer active
+  const handleAttemptRejected = (err) => {
+    const rejected = err.response?.status === 409 && err.response?.data?.attempt;
+    if (rejected) setAttempt(err.response.data.attempt);
+    return Boolean(rejected);
+  };
+
+  const leavePage = () => {
+    secure.release();
+    navigate('/coding/practice');
+  };
+
   // Fetch problem
   useEffect(() => {
     if (!ready || !id) return;
@@ -125,6 +170,12 @@ const CodingChallenge = () => {
       }
     })();
   }, [ready, id, getToken]);
+
+  // Start (or resume) the attempt once the problem is loaded
+  useEffect(() => {
+    if (!ready || !problem?._id || problem._id !== id) return;
+    startAttempt();
+  }, [ready, problem?._id, id, startAttempt]);
 
   // Timer
   useEffect(() => {
@@ -172,7 +223,7 @@ const CodingChallenge = () => {
 
   // Run code against sample test cases (or custom input)
   const handleRun = async () => {
-    if (running || submitting) return;
+    if (running || submitting || !attempt) return;
     setRunning(true);
     setRunResults(null);
     setActiveTab('results');
@@ -182,7 +233,7 @@ const CodingChallenge = () => {
 
       // Use codingAPI which calls /coding/problems/:id/run
       // Pass customInput only when the user is on the Custom Input tab
-      const payload = { language, code };
+      const payload = { language, code, attemptId: attempt.id };
       if (showCustomInput && customInput.trim()) {
         payload.customInput = customInput.trim();
       }
@@ -206,6 +257,7 @@ const CodingChallenge = () => {
         overallStatus,
       });
     } catch (err) {
+      handleAttemptRejected(err);
       toast.error(err.response?.data?.message || 'Run failed');
     } finally {
       setRunning(false);
@@ -214,7 +266,7 @@ const CodingChallenge = () => {
 
   // Submit code against all test cases (including hidden)
   const handleSubmit = async () => {
-    if (running || submitting) return;
+    if (running || submitting || !attempt) return;
     setSubmitting(true);
     setSubmitResult(null);
     setActiveTab('results');
@@ -223,7 +275,7 @@ const CodingChallenge = () => {
       if (!token) return;
 
       // Use codingAPI which calls /coding/problems/:id/submit
-      const res = await codingAPI.submitSolution(token, id, { language, code });
+      const res = await codingAPI.submitSolution(token, id, { language, code, attemptId: attempt.id });
       const { result, message } = res.data;
 
       setSubmitResult(result);
@@ -234,6 +286,7 @@ const CodingChallenge = () => {
         toast.error(message || 'Some test cases failed');
       }
     } catch (err) {
+      handleAttemptRejected(err);
       toast.error(err.response?.data?.message || 'Submission failed');
     } finally {
       setSubmitting(false);
@@ -309,8 +362,9 @@ const CodingChallenge = () => {
       {/* Top bar */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-white/10 bg-black/30 backdrop-blur-xl shrink-0">
         <button
-          onClick={() => navigate('/coding/practice')}
+          onClick={leavePage}
           className="p-1.5 rounded-lg hover:bg-white/10 transition text-slate-300"
+          title="Back to problems"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
@@ -322,6 +376,17 @@ const CodingChallenge = () => {
             {problem.difficulty ? problem.difficulty.charAt(0).toUpperCase() + problem.difficulty.slice(1) : ''}
           </span>
         </div>
+
+        {attemptError && (
+          <button
+            onClick={startAttempt}
+            className="text-xs text-red-300 hover:text-red-200 shrink-0"
+            title="Retry"
+          >
+            {attemptError} — retry
+          </button>
+        )}
+        <ProctorBadge security={secure.security} className="h-7 shrink-0" />
 
         {/* Timer */}
         <div className="flex items-center gap-2 shrink-0">
@@ -385,7 +450,9 @@ const CodingChallenge = () => {
                       >
                         <ExternalLink className="w-4 h-4 shrink-0" />
                         View Full Problem on Codeforces
-                        <span className="ml-auto text-xs text-blue-400 opacity-70">Opens in new tab →</span>
+                        <span className="ml-auto text-xs text-blue-400 opacity-70">
+                          {secure.running ? 'Opening it is recorded as leaving the assessment' : 'Opens in new tab →'}
+                        </span>
                       </a>
                     ) : null;
                   })()
@@ -548,7 +615,7 @@ const CodingChallenge = () => {
                     </button>
                     <button
                       onClick={handleRun}
-                      disabled={running || submitting}
+                      disabled={running || submitting || !attempt}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-xs text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50 transition font-medium"
                     >
                       {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
@@ -556,7 +623,7 @@ const CodingChallenge = () => {
                     </button>
                     <button
                       onClick={handleSubmit}
-                      disabled={running || submitting}
+                      disabled={running || submitting || !attempt}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 border border-violet-500 text-xs text-white font-semibold disabled:opacity-50 transition shadow-[0_0_10px_rgba(139,92,246,0.2)] hover:shadow-[0_0_15px_rgba(139,92,246,0.35)]"
                     >
                       {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -587,7 +654,9 @@ const CodingChallenge = () => {
                         suggestOnTriggerCharacters: true,
                         quickSuggestions: true,
                         formatOnPaste: true,
-                        formatOnType: true
+                        formatOnType: true,
+                        // Monaco's own menu offers cut/copy/paste
+                        contextmenu: !secure.running
                       }}
                     />
                   </div>
@@ -786,7 +855,7 @@ const CodingChallenge = () => {
                         />
                         <button
                           onClick={() => { setShowCustomInput(true); handleRun(); }}
-                          disabled={running || submitting || !customInput.trim()}
+                          disabled={running || submitting || !attempt || !customInput.trim()}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-xs text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50 transition font-medium"
                         >
                           {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
@@ -801,6 +870,25 @@ const CodingChallenge = () => {
           </Panel>
         </PanelGroup>
       </div>
+
+      <AssessmentGate
+        open={secure.needsGate}
+        title="Proctored Coding Challenge"
+        subtitle={problem.title}
+        security={secure.security}
+        startLabel="I Understand — Start Coding"
+        onStart={secure.arm}
+        onCancel={leavePage}
+        cancelLabel="Back to Problems"
+      />
+
+      <ViolationOverlay
+        secure={secure}
+        terminatedTitle="Attempt terminated"
+        terminatedMessage="This attempt was ended because the violation limit was reached. Code can no longer be run or submitted in it. Your draft is kept, and the attempt stays in the violation log."
+        terminatedActionLabel="Start a new attempt"
+        onTerminatedAction={startAttempt}
+      />
 
       {/* Custom scrollbar styles */}
       <style>{`

@@ -1,7 +1,9 @@
 const CodingProblem = require('../models/CodingProblem');
+const CodingAttempt = require('../models/CodingAttempt');
 const Submission = require('../models/Submission');
 const User = require('../models/User');
 const { runAgainstTestCases, executeCode } = require('../utils/judgeService');
+const { buildSecurityPolicy, recordViolation, securitySummary } = require('../utils/assessmentSecurity');
 
 /* ───────── helpers ───────── */
 
@@ -14,6 +16,44 @@ async function resolveUser(req) {
   // JWT auth fallback
   if (req.user) return req.user;
   return null;
+}
+
+function attemptView(attempt) {
+  return {
+    id: attempt._id,
+    problemId: attempt.problemId,
+    status: attempt.status,
+    startedAt: attempt.startedAt,
+    endedAt: attempt.endedAt,
+    submissionCount: attempt.submissionCount,
+    accepted: attempt.accepted,
+    security: securitySummary(attempt)
+  };
+}
+
+/**
+ * Look up the caller's attempt for a problem and make sure code may still be
+ * run or submitted in it. Sends the error response itself and returns null
+ * when the request must stop.
+ */
+async function requireActiveAttempt(req, res, { user, problemId, attemptId }) {
+  if (!attemptId) {
+    res.status(400).json({ message: 'attemptId is required. Reload the problem to start an attempt.' });
+    return null;
+  }
+
+  const attempt = await CodingAttempt.findById(attemptId);
+  if (!attempt || String(attempt.userId) !== String(user._id) || String(attempt.problemId) !== String(problemId)) {
+    res.status(404).json({ message: 'Coding attempt not found' });
+    return null;
+  }
+
+  if (attempt.status !== 'active') {
+    res.status(409).json({ message: 'This attempt was terminated for assessment violations', attempt: attemptView(attempt) });
+    return null;
+  }
+
+  return attempt;
 }
 
 /* ───────── GET /problems ───────── */
@@ -177,7 +217,18 @@ async function runCode(req, res, next) {
       throw new Error('Problem not found');
     }
 
-    const { language = 'javascript', code = '', customInput } = req.body;
+    const user = await resolveUser(req);
+    if (!user) {
+      res.status(401);
+      throw new Error('Not authorized');
+    }
+
+    const { language = 'javascript', code = '', customInput, attemptId } = req.body;
+
+    const attempt = await requireActiveAttempt(req, res, { user, problemId: problem._id, attemptId });
+    if (!attempt) return undefined;
+    attempt.lastActivityAt = new Date();
+    await attempt.save();
 
     // If custom input is provided, run with that single input
     if (customInput !== undefined && customInput !== null) {
@@ -257,7 +308,10 @@ async function submitSolution(req, res, next) {
       throw new Error('Not authorized');
     }
 
-    const { language = 'javascript', code = '' } = req.body;
+    const { language = 'javascript', code = '', attemptId } = req.body;
+
+    const attempt = await requireActiveAttempt(req, res, { user, problemId: problem._id, attemptId });
+    if (!attempt) return undefined;
 
     // Run against ALL test cases (including hidden)
     const allTests = problem.testCases || [];
@@ -277,11 +331,26 @@ async function submitSolution(req, res, next) {
     const { results, passedCount, totalCount, overallStatus } =
       await runAgainstTestCases(language, code, allTests);
 
+    // Termination may have happened while the tests were running
+    const current = await CodingAttempt.findById(attempt._id);
+    if (!current || current.status !== 'active') {
+      return res.status(409).json({
+        message: 'This attempt was terminated for assessment violations',
+        attempt: current ? attemptView(current) : null
+      });
+    }
+
+    current.submissionCount += 1;
+    if (overallStatus === 'accepted') current.accepted = true;
+    current.lastActivityAt = new Date();
+    await current.save();
+
     // Save submission
     const submission = await Submission.create({
       userId: user._id,
       clerkUserId: user.clerkUserId || '',
       problemId: problem._id,
+      attemptId: current._id,
       language,
       code,
       status: overallStatus,
@@ -431,11 +500,85 @@ async function getUserStatus(req, res, next) {
   }
 }
 
+/* ───────── POST /problems/:id/attempts ───────── */
+
+// Resumes the caller's active attempt for this problem, or starts a new one.
+// Resuming keeps the violation count, so reloading the page does not reset it.
+async function startAttempt(req, res, next) {
+  try {
+    const problem = await CodingProblem.findById(req.params.id).select('_id').lean();
+    if (!problem) {
+      res.status(404);
+      throw new Error('Problem not found');
+    }
+
+    const user = await resolveUser(req);
+    if (!user) {
+      res.status(401);
+      throw new Error('Not authorized');
+    }
+
+    let attempt = await CodingAttempt.findOne({ userId: user._id, problemId: problem._id, status: 'active' })
+      .sort({ createdAt: -1 });
+
+    let created = false;
+    if (!attempt) {
+      attempt = await CodingAttempt.create({
+        userId: user._id,
+        problemId: problem._id,
+        securityPolicy: buildSecurityPolicy()
+      });
+      created = true;
+    }
+
+    res.status(created ? 201 : 200).json({ attempt: attemptView(attempt) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/* ───────── POST /attempts/:attemptId/violations ───────── */
+
+async function logAttemptViolation(req, res, next) {
+  try {
+    const user = await resolveUser(req);
+    if (!user) {
+      res.status(401);
+      throw new Error('Not authorized');
+    }
+
+    const attempt = await CodingAttempt.findById(req.params.attemptId);
+    if (!attempt || String(attempt.userId) !== String(user._id)) {
+      return res.status(404).json({ message: 'Coding attempt not found' });
+    }
+
+    if (attempt.status !== 'active') {
+      return res.status(409).json({ message: `Coding attempt is ${attempt.status}`, security: securitySummary(attempt) });
+    }
+
+    const { type, details } = req.body;
+    const { shouldTerminate } = recordViolation(attempt, { type, details });
+    if (shouldTerminate) {
+      attempt.status = 'terminated';
+      attempt.endedAt = new Date();
+    }
+    await attempt.save();
+
+    return res.status(200).json({ security: securitySummary(attempt), status: attempt.status });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   listProblems,
   getProblem,
   submitSolution,
   runCode,
   saveDraft,
-  getUserStatus
+  getUserStatus,
+  startAttempt,
+  logAttemptViolation,
+  requireActiveAttempt,
+  attemptView
 };

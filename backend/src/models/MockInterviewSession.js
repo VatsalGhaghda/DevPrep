@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const { securityFields } = require('./schemas/assessmentSecurity');
+
 const messageSchema = new mongoose.Schema(
   {
     role: {
@@ -114,7 +116,9 @@ const mockInterviewSessionSchema = new mongoose.Schema(
     evaluation: {
       type: evaluationSchema,
       default: null
-    }
+    },
+    // Sessions created before proctoring existed keep securityPolicy.enabled = false
+    ...securityFields()
   },
   { timestamps: true }
 );
