@@ -49,15 +49,12 @@ function executionLimiter(req, res, next) {
 
   // Wrap next() in the limiter.  When a slot opens, the limiter calls the
   // wrapped function which resumes Express's handler chain.
+  // Hold a slot until the response is finished OR the client disconnects,
+  // so an aborted request can never leak a slot.
   limit(() =>
     new Promise((resolve) => {
-      // Intercept res.end / res.json / res.send to know when the response
-      // is done so we can release the semaphore slot.
-      const originalEnd = res.end.bind(res);
-      res.end = (...args) => {
-        resolve();
-        return originalEnd(...args);
-      };
+      res.once('finish', resolve);
+      res.once('close', resolve);
       next();
     })
   ).catch((err) => {

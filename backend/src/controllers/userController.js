@@ -1,87 +1,37 @@
 const mongoose = require('mongoose');
+const { getTimezone, computeStreaks } = require('../utils/timezone');
+const { escapeRegex } = require('../utils/escapeRegex');
 const User = require('../models/User');
 const MockInterviewSession = require('../models/MockInterviewSession');
 const Submission = require('../models/Submission');
 const CodingProblem = require('../models/CodingProblem');
 
-/* ─────────────── Existing profile endpoints ─────────────── */
 
-async function getProfile(req, res, next) {
-  try {
-    const user = req.user;
-    res.status(200).json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        skills: user.skills,
-        targetRole: user.targetRole,
-        experienceLevel: user.experienceLevel,
-        bio: user.bio,
-        avatar: user.avatar,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
-    });
-  } catch (err) {
-    next(err);
-  }
+/**
+ * Find a public profile by username. Accounts created before usernames
+ * existed fall back to an exact (case-insensitive) name match, but only when
+ * exactly one public user has that name.
+ */
+async function findPublicUser(username, select) {
+  const key = String(username || '').trim();
+  const byUsername = await User.findOne({ username: key.toLowerCase(), isProfilePublic: { $ne: false } })
+    .select(select)
+    .lean();
+  if (byUsername) return byUsername;
+
+  const byName = await User.find({
+    name: { $regex: `^${escapeRegex(key)}$`, $options: 'i' },
+    isProfilePublic: { $ne: false }
+  })
+    .select(select)
+    .limit(2)
+    .lean();
+  return byName.length === 1 ? byName[0] : null;
 }
 
-async function updateProfile(req, res, next) {
-  try {
-    const user = req.user;
-    const allowed = ['name', 'username', 'skills', 'targetRole', 'experienceLevel', 'bio', 'avatar'];
-
-    for (const key of allowed) {
-      if (Object.prototype.hasOwnProperty.call(req.body, key)) {
-        user[key] = req.body[key];
-      }
-    }
-
-    await user.save();
-
-    res.status(200).json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        skills: user.skills,
-        targetRole: user.targetRole,
-        experienceLevel: user.experienceLevel,
-        bio: user.bio,
-        avatar: user.avatar,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
-    });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getStats(req, res, next) {
-  try {
-    const userId = req.user._id;
-
-    const totalInterviews = await MockInterviewSession.countDocuments({ userId });
-    const completedInterviews = await MockInterviewSession.countDocuments({ userId, status: 'completed' });
-
-    const agg = await MockInterviewSession.aggregate([
-      { $match: { userId, status: 'completed', overallScore: { $ne: null } } },
-      { $group: { _id: null, avgScore: { $avg: '$overallScore' } } }
-    ]);
-
-    const averageScore = agg.length ? agg[0].avgScore : null;
-
-    res.status(200).json({ stats: { totalInterviews, completedInterviews, averageScore } });
-  } catch (err) {
-    next(err);
-  }
+// Inline avatars (data: URLs) can be over 1 MB; search results only carry links
+function listAvatar(avatar) {
+  return typeof avatar === 'string' && /^https?:\/\//.test(avatar) ? avatar : '';
 }
 
 /* ─────────────── New: User search (public, no auth) ─────────────── */
@@ -99,21 +49,29 @@ async function searchUsers(req, res, next) {
       return res.status(200).json({ users: [] });
     }
 
-    const regex = new RegExp(q, 'i');
+    // Prefix match on escaped input: safe from regex injection and can use indexes
+    const regex = new RegExp(`^${escapeRegex(q)}`, 'i');
 
-    const users = await User.find({
-      $or: [{ name: regex }, { username: regex }]
-    })
-      .select('name username avatar experienceLevel')
-      .limit(8)
-      .lean();
+    const users = await User.aggregate([
+      { $match: { isProfilePublic: { $ne: false }, $or: [{ name: regex }, { username: regex }] } },
+      { $limit: 8 },
+      {
+        $project: {
+          name: 1,
+          username: 1,
+          experienceLevel: 1,
+          // Don't ship inline (data:) avatars in search results
+          avatar: { $cond: [{ $regexMatch: { input: { $ifNull: ['$avatar', ''] }, regex: '^https?://' } }, '$avatar', ''] }
+        }
+      }
+    ]);
 
     res.status(200).json({
       users: users.map((u) => ({
         id: u._id,
         name: u.name,
         username: u.username || '',
-        avatar: u.avatar || '',
+        avatar: listAvatar(u.avatar),
         experienceLevel: u.experienceLevel || 'Beginner'
       }))
     });
@@ -131,11 +89,7 @@ async function getPublicProfile(req, res, next) {
     const { username } = req.params;
 
     // Try to find by username field first, then by name as fallback
-    const user = await User.findOne({
-      $or: [{ username: username }, { name: username }]
-    })
-      .select('name username avatar bio skills targetRole experienceLevel createdAt clerkUserId')
-      .lean();
+    const user = await findPublicUser(username, 'name username avatar bio skills targetRole experienceLevel createdAt clerkUserId');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -152,8 +106,6 @@ async function getPublicProfile(req, res, next) {
       ),
       MockInterviewSession.countDocuments({ ...matchUser, status: 'completed' })
     ]);
-    console.log('getPublicProfile matchUser:', JSON.stringify(matchUser));
-    console.log('getPublicProfile totalInterviews count:', totalInterviews);
 
     res.status(200).json({
       user: {
@@ -182,13 +134,10 @@ async function getPublicProfile(req, res, next) {
  */
 async function getPublicAnalytics(req, res, next) {
   try {
+    const tz = getTimezone(req);
     const { username } = req.params;
 
-    const user = await User.findOne({
-      $or: [{ username }, { name: username }]
-    })
-      .select('_id clerkUserId')
-      .lean();
+    const user = await findPublicUser(username, '_id clerkUserId');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -202,7 +151,7 @@ async function getPublicAnalytics(req, res, next) {
     since.setFullYear(since.getFullYear() - 1);
 
     // Run all DB queries in parallel — single round-trip per query, no redundant fetches.
-    const [solvedAgg, totalSubAgg, totalProblemsAgg, activity, days] = await Promise.all([
+    const [solvedAgg, totalSubAgg, totalProblemsAgg, activity, days, languageUsage, solvedCategories, recentSolved] = await Promise.all([
       // Unique problems solved, grouped by difficulty
       Submission.aggregate([
         { $match: { ...matchUser, status: 'accepted', isDraft: false } },
@@ -239,7 +188,7 @@ async function getPublicAnalytics(req, res, next) {
       // Submission activity heatmap (last 365 days)
       Submission.aggregate([
         { $match: { ...matchUser, isDraft: false, createdAt: { $gte: since } } },
-        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } }, count: { $sum: 1 } } },
         { $project: { _id: 0, date: '$_id', count: 1 } },
         { $sort: { date: 1 } }
       ]),
@@ -247,8 +196,42 @@ async function getPublicAnalytics(req, res, next) {
       // Unique active days (for streak calculation)
       Submission.aggregate([
         { $match: { ...matchUser, isDraft: false } },
-        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } } } },
         { $sort: { _id: 1 } }
+      ]),
+
+      // Submissions by language
+      Submission.aggregate([
+        { $match: { ...matchUser, isDraft: false } },
+        { $group: { _id: '$language', count: { $sum: 1 } } },
+        { $project: { _id: 0, language: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+
+      // Accepted problems by category
+      Submission.aggregate([
+        { $match: { ...matchUser, status: 'accepted', isDraft: false } },
+        { $group: { _id: '$problemId' } },
+        { $lookup: { from: 'codingproblems', localField: '_id', foreignField: '_id', as: 'problem' } },
+        { $unwind: '$problem' },
+        { $group: { _id: '$problem.category', count: { $sum: 1 } } },
+        { $project: { _id: 0, category: '$_id', count: 1 } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+
+      // Recently solved problems: first accepted submission per problem, newest first.
+      // Only the problem title, difficulty and date are shared, never code.
+      Submission.aggregate([
+        { $match: { ...matchUser, status: 'accepted', isDraft: false } },
+        { $sort: { createdAt: 1 } },
+        { $group: { _id: '$problemId', solvedAt: { $first: '$createdAt' }, language: { $first: '$language' } } },
+        { $sort: { solvedAt: -1 } },
+        { $limit: 15 },
+        { $lookup: { from: 'codingproblems', localField: '_id', foreignField: '_id', as: 'problem' } },
+        { $unwind: '$problem' },
+        { $project: { _id: 0, title: '$problem.title', difficulty: '$problem.difficulty', category: '$problem.category', language: 1, solvedAt: 1 } }
       ])
     ]);
 
@@ -270,43 +253,8 @@ async function getPublicAnalytics(req, res, next) {
 
     // Calculate streak from unique active days
     const dateStrings = days.map((d) => d._id);
-    let currentStreak = 0;
-    let longestStreak = 0;
-    let lastActiveDate = null;
-
-    if (dateStrings.length > 0) {
-      longestStreak = 1;
-      let currentRun = 1;
-
-      for (let i = 1; i < dateStrings.length; i++) {
-        const prev = new Date(dateStrings[i - 1]);
-        const curr = new Date(dateStrings[i]);
-        const diffDays = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
-        if (diffDays === 1) {
-          currentRun++;
-          longestStreak = Math.max(longestStreak, currentRun);
-        } else {
-          currentRun = 1;
-        }
-      }
-
-      lastActiveDate = dateStrings[dateStrings.length - 1];
-      const lastDate = new Date(lastActiveDate);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffFromToday = Math.round((today - lastDate) / (1000 * 60 * 60 * 24));
-
-      if (diffFromToday <= 1) {
-        currentStreak = 1;
-        for (let i = dateStrings.length - 2; i >= 0; i--) {
-          const prev = new Date(dateStrings[i]);
-          const curr = new Date(dateStrings[i + 1]);
-          const diff = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
-          if (diff === 1) currentStreak++;
-          else break;
-        }
-      }
-    }
+    const { currentStreak, longestStreak } = computeStreaks(dateStrings, tz);
+    const lastActiveDate = dateStrings.length ? dateStrings[dateStrings.length - 1] : null;
 
     res.status(200).json({
       codingStats: {
@@ -323,11 +271,14 @@ async function getPublicAnalytics(req, res, next) {
         acceptanceRate
       },
       activity,
-      streak: { currentStreak, longestStreak, lastActiveDate }
+      streak: { currentStreak, longestStreak, lastActiveDate },
+      languageUsage,
+      solvedCategories,
+      recentSolved
     });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { getProfile, updateProfile, getStats, searchUsers, getPublicProfile, getPublicAnalytics };
+module.exports = { searchUsers, getPublicProfile, getPublicAnalytics };

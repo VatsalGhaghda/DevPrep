@@ -93,7 +93,9 @@ const mockInterviewSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'completed', 'abandoned'],
+      // ready = created, waiting for the candidate to finish the device check and press Start.
+      // terminated = ended by the proctoring violation limit
+      enum: ['ready', 'active', 'completed', 'abandoned', 'terminated'],
       default: 'active',
       index: true
     },
@@ -115,6 +117,18 @@ const mockInterviewSessionSchema = new mongoose.Schema(
     },
     evaluation: {
       type: evaluationSchema,
+      default: null
+    },
+    // none: not requested (abandoned/terminated) · success · failed (AI error, can be retried)
+    evaluationStatus: {
+      type: String,
+      enum: ['none', 'success', 'failed'],
+      default: 'none'
+    },
+    // Set while the AI is writing a reply, so a second message can't be sent
+    // concurrently and interleave with the first.
+    awaitingReplySince: {
+      type: Date,
       default: null
     },
     // Sessions created before proctoring existed keep securityPolicy.enabled = false

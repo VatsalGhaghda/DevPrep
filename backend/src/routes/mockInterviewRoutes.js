@@ -1,17 +1,27 @@
 const express = require('express');
+const multer = require('multer');
 const { body, param } = require('express-validator');
 
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
-const { mockInterviewStartLimiter, mockInterviewMessageLimiter } = require('../middleware/rateLimiters');
+const {
+  mockInterviewStartLimiter,
+  mockInterviewMessageLimiter,
+  voiceTranscriptionLimiter
+} = require('../middleware/rateLimiters');
+const { AppError } = require('../utils/AppError');
+const { isSupportedAudio } = require('../utils/speechService');
+const { transcribeAnswer } = require('../controllers/voiceController');
 const { VIOLATION_TYPES } = require('../utils/assessmentSecurity');
 const {
   startSession,
+  beginSession,
   getSession,
   sendMessage,
   endSession,
   getHistory,
-  logViolation
+  logViolation,
+  retryEvaluation
 } = require('../controllers/mockInterviewController');
 
 const router = express.Router();
@@ -32,8 +42,10 @@ router.post(
       .withMessage('Difficulty must be easy, medium, or hard'),
     body('duration').optional().isInt().isIn([15, 30, 45, 60])
       .withMessage('Duration must be 15, 30, 45, or 60'),
-    body('selectedTopics').optional().isArray()
-      .withMessage('Selected topics must be an array'),
+    body('selectedTopics').optional().isArray({ max: 10 })
+      .withMessage('Selected topics must be an array of at most 10 topics'),
+    body('selectedTopics.*').optional().isString().isLength({ max: 50 })
+      .withMessage('Each topic must be a string of at most 50 characters'),
     body('resumeId').optional().isMongoId()
       .withMessage('Resume ID must be a valid ID')
   ],
@@ -42,6 +54,15 @@ router.post(
 );
 
 router.get('/history', getHistory);
+
+// The candidate finished the device check and pressed Start
+router.post(
+  '/:id/begin',
+  mockInterviewMessageLimiter,
+  [param('id').isMongoId().withMessage('Invalid session id')],
+  validateRequest,
+  beginSession
+);
 
 router.get(
   '/:id',
@@ -60,6 +81,28 @@ router.post(
   ],
   validateRequest,
   sendMessage
+);
+
+// Spoken answers (voice mode) when the browser has no speech recognition.
+// Audio is kept in memory, transcribed, and discarded.
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (!isSupportedAudio(file.mimetype)) {
+      return cb(new AppError('Unsupported audio format', 415));
+    }
+    return cb(null, true);
+  }
+});
+
+router.post(
+  '/:id/transcribe',
+  voiceTranscriptionLimiter,
+  [param('id').isMongoId().withMessage('Invalid session id')],
+  validateRequest,
+  audioUpload.single('audio'),
+  transcribeAnswer
 );
 
 router.post(
@@ -82,6 +125,14 @@ router.post(
   ],
   validateRequest,
   logViolation
+);
+
+router.post(
+  '/:id/evaluate',
+  mockInterviewStartLimiter,
+  [param('id').isMongoId().withMessage('Invalid session id')],
+  validateRequest,
+  retryEvaluation
 );
 
 module.exports = router;

@@ -1,51 +1,25 @@
 const express = require('express');
-const { body } = require('express-validator');
+const { param, query } = require('express-validator');
 
-const { protect } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validateRequest');
-const {
-  getProfile,
-  updateProfile,
-  getStats,
-  searchUsers,
-  getPublicProfile,
-  getPublicAnalytics
-} = require('../controllers/userController');
+const { publicLimiter } = require('../middleware/rateLimiters');
+const { searchUsers, getPublicProfile, getPublicAnalytics } = require('../controllers/userController');
 
 const router = express.Router();
 
-// Authenticated endpoints
-router.get('/profile', protect, getProfile);
+// Profile reads/updates for signed-in users live under /api/clerk/profile.
 
-router.put(
-  '/profile',
-  protect,
-  [
-    body('name').optional().trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 chars'),
-    body('username')
-      .optional()
-      .trim()
-      .isLength({ min: 2, max: 50 })
-      .matches(/^[a-zA-Z0-9_.-]+$/)
-      .withMessage('Username must be 2-50 chars, letters/numbers/._- only'),
-    body('skills').optional().isArray().withMessage('Skills must be an array'),
-    body('targetRole').optional().isString().withMessage('Target role must be a string'),
-    body('experienceLevel')
-      .optional()
-      .isIn(['Beginner', 'Intermediate', 'Advanced', 'Expert'])
-      .withMessage('Invalid experience level'),
-    body('bio').optional().isString().withMessage('Bio must be a string'),
-    body('avatar').optional().isString().withMessage('Avatar must be a string')
-  ],
+// Public endpoints (no auth required, rate limited per IP)
+const usernameParam = param('username').isString().isLength({ min: 1, max: 100 }).withMessage('Invalid username');
+
+router.get(
+  '/search',
+  publicLimiter,
+  [query('q').optional().isString().isLength({ max: 50 }).withMessage('Search query is too long')],
   validateRequest,
-  updateProfile
+  searchUsers
 );
-
-router.get('/stats', protect, getStats);
-
-// Public endpoints (no auth required)
-router.get('/search', searchUsers);
-router.get('/public/:username', getPublicProfile);
-router.get('/public/:username/analytics', getPublicAnalytics);
+router.get('/public/:username', publicLimiter, [usernameParam], validateRequest, getPublicProfile);
+router.get('/public/:username/analytics', publicLimiter, [usernameParam], validateRequest, getPublicAnalytics);
 
 module.exports = router;

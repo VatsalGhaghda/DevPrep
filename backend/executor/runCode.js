@@ -1,55 +1,62 @@
 /**
- * Docker Sandbox Code Runner
+ * Sandbox code runner.
  *
- * Reads CODE, LANG, INPUT from environment variables.
- * Compiles (if needed), runs, and outputs JSON result to stdout.
+ * Reads one JSON job from stdin:
+ *   { "language": "python", "code": "...", "inputs": ["stdin for run 1", ...] }
+ *
+ * Compiles once (if needed), runs the program once per input, and writes one
+ * JSON result to stdout:
+ *   {
+ *     "compileError": false,
+ *     "error": "",                       // compile / setup error text
+ *     "results": [
+ *       { "output": "...", "error": "...", "timedOut": false, "exitCode": 0, "runtimeError": false }
+ *     ]
+ *   }
+ *
+ * Programs are started directly (no shell), so a timeout kills the user's
+ * process itself and nothing is left running in the background.
+ *
+ * Inside Docker this runs as an unprivileged user with no network, capped
+ * memory/CPU/pids and a read-only filesystem (see utils/runInDocker.js).
  *
  * Supported languages: python, cpp, c, java, javascript
  */
 
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
-const TIMEOUT_MS = 5000; // 5 second execution timeout
+const RUN_TIMEOUT_MS = parseInt(process.env.RUN_TIMEOUT_MS || '5000', 10);
+const COMPILE_TIMEOUT_MS = parseInt(process.env.COMPILE_TIMEOUT_MS || '20000', 10);
+const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
-const code = process.env.CODE || '';
-const lang = (process.env.LANG || 'python').toLowerCase().trim();
-const input = process.env.INPUT || '';
-
-// Per-execution working directory is passed from the parent (runInDocker.js)
-// as a UUID-keyed path to prevent concurrent runs from colliding.
-// Falls back to the shared .work directory for backwards compatibility.
-const WORK_DIR = process.env.WORK_DIR || path.join(__dirname, '.work');
+// Per-execution working directory. Inside Docker it is a tmpfs; locally the
+// parent passes a UUID-keyed folder so concurrent runs never collide.
+const WORK_DIR = process.env.WORK_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'devprep-'));
 
 // ─── Path sanitizer ───────────────────────────────────────────────────────────
-// Strips absolute server paths from error messages so users NEVER see
-// internal filesystem details like D:\Projects\AWT project\DevPrep\...
+// Strips absolute server paths from error messages so users never see
+// internal filesystem details.
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 const PATH_PATTERNS = [
-  // Escape the work dir path for use in regex (handles backslashes, spaces)
-  new RegExp(WORK_DIR.replace(/[\\/]/g, '[/\\\\]').replace(/[.*+?^${}()|[\]]/g, '\\$&') + '[/\\\\]?[^\n"]*', 'gi'),
-  // Any Windows absolute path e.g. C:\...  or  C:/...
-  /[A-Za-z]:[/\\][^\n"']*/g,
-  // Paths in stack trace parentheses e.g. (C:\path\file.js:1:1)
-  /\([A-Za-z]:[/\\][^)\n]+\)/g,
-  // Project-specific dir names as a fallback (catches partial paths)
-  /(?:DevPrep|executor|\.work|AWT project)[/\\][^\n"']*/gi,
+  new RegExp(escapeRegex(WORK_DIR).replace(/\\\\|\//g, '[/\\\\]') + '[/\\\\]?', 'gi'),
+  /[A-Za-z]:[/\\][^\s"':]*/g, // Windows absolute paths
+  /\/(?:home|tmp|sandbox|usr|var|root|Users)\/[^\s"':]*/g, // POSIX absolute paths
 ];
 
 function sanitizeError(msg) {
   if (!msg) return '';
   let clean = String(msg);
-  // First pass: named patterns
-  for (const pattern of PATH_PATTERNS) {
-    clean = clean.replace(pattern, '');
-  }
-  // Second pass: catch any remaining drive-letter paths
-  clean = clean.replace(/[A-Za-z]:[/\\]\S+/g, '');
+  for (const pattern of PATH_PATTERNS) clean = clean.replace(pattern, '');
   return clean.trim();
 }
 
-// ─── Device Guard / Security policy detector ─────────────────────────────────
+// ─── Device Guard / Security policy detector (Windows local mode) ───────────
 function isDeviceGuardError(msg) {
   if (!msg) return false;
   const m = String(msg).toLowerCase();
@@ -62,166 +69,149 @@ function isDeviceGuardError(msg) {
   );
 }
 
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const DEVICE_GUARD_MESSAGE =
+  'Execution blocked by system security policy (Device Guard). Compiled languages (C++/C/Java) cannot run in this environment. Please use JavaScript or Python.';
+
+/**
+ * Run a command without a shell.
+ * @returns {{ stdout, stderr, status, timedOut, spawnError }}
+ */
+function run(cmd, args, { input = '', timeoutMs = RUN_TIMEOUT_MS } = {}) {
+  const r = spawnSync(cmd, args, {
+    cwd: WORK_DIR,
+    input,
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
+    maxBuffer: MAX_OUTPUT_BYTES,
+    windowsHide: true,
+    env: process.env,
+  });
+
+  const stdout = r.stdout ? r.stdout.toString('utf-8') : '';
+  const stderr = r.stderr ? r.stderr.toString('utf-8') : '';
+  const timedOut = Boolean(r.error && r.error.code === 'ETIMEDOUT');
+  const outputTooLarge = Boolean(r.error && r.error.code === 'ENOBUFS');
+
+  return {
+    stdout,
+    stderr: outputTooLarge ? 'Output limit exceeded' : stderr,
+    status: r.status,
+    signal: r.signal,
+    timedOut,
+    spawnError: r.error && !timedOut && !outputTooLarge ? r.error.message : '',
+  };
 }
 
-function writeFile(filePath, content) {
-  fs.writeFileSync(filePath, content, 'utf-8');
-}
-
-function run(command) {
-  try {
-    const result = execSync(command, {
-      timeout: TIMEOUT_MS,
-      maxBuffer: 10 * 1024 * 1024,
-      cwd: WORK_DIR,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: process.env.PATH }
-    });
-    return { stdout: result.toString('utf-8'), stderr: '' };
-  } catch (err) {
-    // Timeout
-    if (err.killed || (err.signal && err.signal === 'SIGTERM')) {
-      return { stdout: '', stderr: 'Time Limit Exceeded', timedOut: true };
-    }
-
-    const rawStderr = (err.stderr || '').toString('utf-8');
-    const rawMsg    = err.message || '';
-
-    // Device Guard — Windows blocks unsigned compiled executables
-    if (isDeviceGuardError(rawStderr) || isDeviceGuardError(rawMsg)) {
-      return {
-        stdout: '',
-        stderr: 'Execution blocked by system security policy (Device Guard). Compiled languages (C++/C/Java) cannot run in this environment. Please use JavaScript or Python.',
-        timedOut: false,
-        compileError: false,
-        deviceGuard: true
-      };
-    }
-
-    return {
-      stdout: (err.stdout || '').toString('utf-8'),
-      stderr: sanitizeError(rawStderr) || sanitizeError(rawMsg)
-    };
+function runtimeResult(r) {
+  if (r.timedOut) {
+    return { output: '', error: 'Time Limit Exceeded', timedOut: true, exitCode: null, runtimeError: false };
   }
+  const rawErr = r.spawnError || r.stderr;
+  if (isDeviceGuardError(rawErr)) {
+    return { output: '', error: DEVICE_GUARD_MESSAGE, timedOut: false, exitCode: r.status, runtimeError: true };
+  }
+  const failed = r.status !== 0 || Boolean(r.spawnError);
+  let error = sanitizeError(rawErr);
+  if (failed && !error && r.signal === 'SIGKILL') error = 'Process killed (memory limit exceeded?)';
+  if (failed && !error && r.signal) error = `Process terminated (${r.signal})`;
+  if (failed && !error && r.status != null) error = `Process exited with code ${r.status}`;
+  return {
+    output: (r.stdout || '').trimEnd(),
+    error,
+    timedOut: false,
+    exitCode: r.status,
+    runtimeError: failed,
+  };
 }
 
-function execute() {
-  ensureDir(WORK_DIR);
+function compile(cmd, args) {
+  const r = run(cmd, args, { timeoutMs: COMPILE_TIMEOUT_MS });
+  if (r.timedOut) return 'Compilation timed out';
+  if (r.status !== 0 || r.spawnError) {
+    const raw = r.stderr || r.stdout || r.spawnError || 'Compilation failed';
+    return isDeviceGuardError(raw) ? DEVICE_GUARD_MESSAGE : sanitizeError(raw) || 'Compilation failed';
+  }
+  return null;
+}
 
-  const inputFile = path.join(WORK_DIR, 'input.txt');
-  writeFile(inputFile, input);
-
-  let result;
-
-  switch (lang) {
+function prepare(language, code) {
+  const exe = process.platform === 'win32' ? 'solution.exe' : 'solution';
+  switch (language) {
     case 'python':
     case 'python3': {
-      const codeFile = path.join(WORK_DIR, 'solution.py');
-      writeFile(codeFile, code);
-      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-      result = run(`${pyCmd} "${codeFile}" < "${inputFile}"`);
-      // Sanitize Python tracebacks which include full file paths
-      if (result.stderr) result.stderr = sanitizeError(result.stderr);
-      break;
+      fs.writeFileSync(path.join(WORK_DIR, 'solution.py'), code, 'utf-8');
+      const py = process.platform === 'win32' ? 'python' : 'python3';
+      return { cmd: py, args: ['solution.py'] };
     }
-
     case 'cpp':
     case 'c++': {
-      const codeFile = path.join(WORK_DIR, 'solution.cpp');
-      const binFile  = path.join(WORK_DIR, 'solution');
-      writeFile(codeFile, code);
-
-      const compileResult = run(`g++ -o "${binFile}" "${codeFile}" -std=c++17 -O2`);
-      if (compileResult.stderr) {
-        result = {
-          stdout: '',
-          stderr: sanitizeError(compileResult.stderr),
-          compileError: true
-        };
-        break;
-      }
-
-      result = run(`"${binFile}" < "${inputFile}"`);
-      if (result.deviceGuard) break; // already has clean message
-      if (result.stderr) result.stderr = sanitizeError(result.stderr);
-      break;
+      fs.writeFileSync(path.join(WORK_DIR, 'solution.cpp'), code, 'utf-8');
+      const err = compile('g++', ['-std=c++17', '-O2', '-o', exe, 'solution.cpp']);
+      if (err) return { compileError: err };
+      return { cmd: path.join(WORK_DIR, exe), args: [] };
     }
-
     case 'c': {
-      const codeFile = path.join(WORK_DIR, 'solution.c');
-      const binFile  = path.join(WORK_DIR, 'solution');
-      writeFile(codeFile, code);
-
-      const compileResult = run(`g++ -x c -o "${binFile}" "${codeFile}" -O2`);
-      if (compileResult.stderr) {
-        result = {
-          stdout: '',
-          stderr: sanitizeError(compileResult.stderr),
-          compileError: true
-        };
-        break;
-      }
-
-      result = run(`"${binFile}" < "${inputFile}"`);
-      if (result.deviceGuard) break;
-      if (result.stderr) result.stderr = sanitizeError(result.stderr);
-      break;
+      fs.writeFileSync(path.join(WORK_DIR, 'solution.c'), code, 'utf-8');
+      const err = compile('gcc', ['-O2', '-o', exe, 'solution.c', '-lm']);
+      if (err) return { compileError: err };
+      return { cmd: path.join(WORK_DIR, exe), args: [] };
     }
-
     case 'java': {
-      const codeFile = path.join(WORK_DIR, 'Main.java');
-      writeFile(codeFile, code);
-
-      const compileResult = run(`javac "${codeFile}"`);
-      if (compileResult.stderr) {
-        result = {
-          stdout: '',
-          stderr: sanitizeError(compileResult.stderr),
-          compileError: true
-        };
-        break;
-      }
-
-      result = run(`java -cp "${WORK_DIR}" Main < "${inputFile}"`);
-      if (result.deviceGuard) break;
-      if (result.stderr) result.stderr = sanitizeError(result.stderr);
-      break;
+      fs.writeFileSync(path.join(WORK_DIR, 'Main.java'), code, 'utf-8');
+      const err = compile('javac', ['-J-Xmx256m', 'Main.java']);
+      if (err) return { compileError: err };
+      return { cmd: 'java', args: ['-Xmx256m', '-Xss64m', '-cp', '.', 'Main'] };
     }
-
     case 'javascript':
     case 'js':
     case 'node': {
-      const codeFile = path.join(WORK_DIR, 'solution.js');
-      writeFile(codeFile, code);
-      result = run(`node "${codeFile}" < "${inputFile}"`);
-      // Sanitize Node.js stack traces which include full paths
-      if (result.stderr) result.stderr = sanitizeError(result.stderr);
-      break;
+      fs.writeFileSync(path.join(WORK_DIR, 'solution.js'), code, 'utf-8');
+      return { cmd: process.execPath, args: ['solution.js'] };
     }
-
     default:
-      result = { stdout: '', stderr: `Unsupported language: ${lang}` };
+      return { setupError: `Unsupported language: ${language}` };
+  }
+}
+
+function readJob() {
+  const raw = fs.readFileSync(0, 'utf-8');
+  const job = JSON.parse(raw || '{}');
+  return {
+    language: String(job.language || 'python').toLowerCase().trim(),
+    code: String(job.code || ''),
+    inputs: Array.isArray(job.inputs) && job.inputs.length ? job.inputs.map((i) => String(i ?? '')) : [''],
+  };
+}
+
+function main() {
+  const { language, code, inputs } = readJob();
+  fs.mkdirSync(WORK_DIR, { recursive: true });
+
+  const prepared = prepare(language, code);
+  if (prepared.compileError || prepared.setupError) {
+    return {
+      compileError: Boolean(prepared.compileError),
+      error: prepared.compileError || prepared.setupError,
+      results: [],
+    };
   }
 
-  const output = {
-    output:       (result.stdout || '').trimEnd(),
-    error:        result.stderr  || '',
-    timedOut:     result.timedOut     || false,
-    compileError: result.compileError || false
-  };
-
-  process.stdout.write(JSON.stringify(output));
+  const results = inputs.map((input) => runtimeResult(run(prepared.cmd, prepared.args, { input })));
+  return { compileError: false, error: '', results };
 }
 
+let out;
 try {
-  execute();
+  out = main();
 } catch (err) {
-  process.stdout.write(JSON.stringify({
-    output: '',
-    error: sanitizeError(err.message) || 'An unexpected error occurred in the sandbox.',
-    timedOut: false,
-    compileError: false
-  }));
+  out = {
+    compileError: false,
+    error: sanitizeError(err && err.message) || 'An unexpected error occurred in the sandbox.',
+    results: [],
+  };
+} finally {
+  if (!process.env.WORK_DIR) {
+    try { fs.rmSync(WORK_DIR, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+  }
 }
+process.stdout.write(JSON.stringify(out));

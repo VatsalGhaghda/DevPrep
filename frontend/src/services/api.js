@@ -7,45 +7,17 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 });
 
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    const hasAuthHeader = Boolean(
-      config.headers && (config.headers.Authorization || config.headers.authorization)
-    );
-    // Only attach the legacy JWT token if it is a real non-empty string.
-    // Prevents "Authorization: Bearer null" when no JWT is stored.
-    if (token && token !== 'null' && token !== 'undefined' && !hasAuthHeader) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// Every request passes the Clerk session token explicitly (see below).
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      if (typeof unauthorizedHandler === 'function') {
-        unauthorizedHandler();
-      }
-    }
-    return Promise.reject(error);
+// The viewer's time zone, so daily stats (heatmap, streaks) use local days
+const TIME_ZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (_) {
+    return 'UTC';
   }
-);
-
-/* ── Auth ── */
-export const authAPI = {
-  register: (data) => api.post('/auth/register', data),
-  login: (data) => api.post('/auth/login', data),
-  verify: () => api.get('/auth/verify'),
-  verifyEmail: (params) => api.get('/auth/verify-email', { params }),
-  resendVerification: (data) => api.post('/auth/resend-verification', data),
-  forgotPassword: (data) => api.post('/auth/forgot-password', data),
-  resetPassword: (data) => api.post('/auth/reset-password', data)
-};
+})();
+const tzParams = { tz: TIME_ZONE };
 
 /* ── Clerk ── */
 export const clerkAPI = {
@@ -83,6 +55,9 @@ export const questionsAPI = {
 export const mockInterviewAPI = {
   start: (clerkToken, payload) =>
     api.post('/mock-interviews/start', payload, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  // Generates the first question and starts the clock (after the device check)
+  begin: (clerkToken, sessionId) =>
+    api.post(`/mock-interviews/${sessionId}/begin`, {}, { headers: { Authorization: `Bearer ${clerkToken}` }, timeout: 90000 }),
   getSession: (clerkToken, sessionId) =>
     api.get(`/mock-interviews/${sessionId}`, { headers: { Authorization: `Bearer ${clerkToken}` } }),
   sendMessage: (clerkToken, sessionId, content) =>
@@ -92,7 +67,15 @@ export const mockInterviewAPI = {
   getHistory: (clerkToken) =>
     api.get('/mock-interviews/history', { headers: { Authorization: `Bearer ${clerkToken}` } }),
   logViolation: (clerkToken, sessionId, payload) =>
-    api.post(`/mock-interviews/${sessionId}/violations`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.post(`/mock-interviews/${sessionId}/violations`, payload, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  retryEvaluation: (clerkToken, sessionId) =>
+    api.post(`/mock-interviews/${sessionId}/evaluate`, {}, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  // Voice mode fallback: server-side speech-to-text for one recorded answer
+  transcribe: (clerkToken, sessionId, formData) =>
+    api.post(`/mock-interviews/${sessionId}/transcribe`, formData, {
+      headers: { Authorization: `Bearer ${clerkToken}`, 'Content-Type': 'multipart/form-data' },
+      timeout: 90000
+    })
 };
 
 /* ── Resume ── */
@@ -130,26 +113,42 @@ export const codingAPI = {
 /* ── Analytics ── */
 export const analyticsAPI = {
   getOverview: (clerkToken) =>
-    api.get('/analytics/overview', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/overview', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getPerformance: (clerkToken) =>
-    api.get('/analytics/performance', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/performance', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getTopics: (clerkToken) =>
-    api.get('/analytics/topics', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/topics', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getCodingStats: (clerkToken) =>
-    api.get('/analytics/coding-stats', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/coding-stats', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getSubmissionActivity: (clerkToken) =>
-    api.get('/analytics/submission-activity', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/submission-activity', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getStreak: (clerkToken) =>
-    api.get('/analytics/streak', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/streak', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getProfileInsights: (clerkToken) =>
-    api.get('/analytics/profile-insights', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+    api.get('/analytics/profile-insights', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } }),
   getRecentActivity: (clerkToken) =>
-    api.get('/analytics/recent-activity', { headers: { Authorization: `Bearer ${clerkToken}` } })
+    api.get('/analytics/recent-activity', { params: tzParams, headers: { Authorization: `Bearer ${clerkToken}` } })
 };
 
 /* ── Users (public search) ── */
 export const userAPI = {
   search: (query) => api.get('/users/search', { params: { q: query } }),
-  getPublicProfile: (username) => api.get(`/users/public/${username}`),
-  getPublicAnalytics: (username) => api.get(`/users/public/${username}/analytics`)
+  getPublicProfile: (username) => api.get(`/users/public/${encodeURIComponent(username)}`),
+  getPublicAnalytics: (username) =>
+    api.get(`/users/public/${encodeURIComponent(username)}/analytics`, { params: tzParams })
+};
+
+/* ── Developer analytics (GitHub / LeetCode / Codeforces) ── */
+export const devAnalyticsAPI = {
+  get: (clerkToken) =>
+    api.get('/dev-analytics', { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  connect: (clerkToken, platform, value) =>
+    api.put(`/dev-analytics/connections/${platform}`, { value }, { headers: { Authorization: `Bearer ${clerkToken}` }, timeout: 90000 }),
+  disconnect: (clerkToken, platform) =>
+    api.delete(`/dev-analytics/connections/${platform}`, { headers: { Authorization: `Bearer ${clerkToken}` } }),
+  sync: (clerkToken, { platform, onlyStale } = {}) =>
+    api.post('/dev-analytics/sync', { ...(platform ? { platform } : {}), ...(onlyStale ? { onlyStale } : {}) },
+      { headers: { Authorization: `Bearer ${clerkToken}` }, timeout: 120000 }),
+  contests: (clerkToken, refresh = false) =>
+    api.get('/dev-analytics/contests', { headers: { Authorization: `Bearer ${clerkToken}` }, params: refresh ? { refresh: true } : {} })
 };

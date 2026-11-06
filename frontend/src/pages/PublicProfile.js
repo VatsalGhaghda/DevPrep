@@ -1,76 +1,89 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  FileText,
-  Code2,
-  PlayCircle,
-  Brain,
-  User,
-  Calendar,
-  CheckCircle2,
-  ArrowLeft
-} from 'lucide-react';
+import { toast } from 'sonner';
+import { ArrowLeft, CalendarDays, CheckCircle2, Code2, Flame, Layers, Link2, MessageSquare, TrendingUp, User, Zap } from 'lucide-react';
 import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
 import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
-import PublicProfileAnalytics from '../components/PublicProfileAnalytics';
+import { Card } from '../components/devAnalytics/ui';
+import YearHeatmap from '../components/devAnalytics/YearHeatmap';
+import {
+  ProfileHero, Kpi, ProblemSolvingCard, BreakdownCard, RecentSolvedCard, AchievementsCard, buildAchievements
+} from '../components/profile/ProfileSections';
 import { userAPI } from '../services/api';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
+
+const DEVPREP_SOURCE = { id: 'devprep', label: 'DevPrep', color: '#a78bfa', unit: 'submissions' };
+// Achievement tracks that only use data a public profile shares
+const PUBLIC_TRACKS = ['solved', 'hard', 'streak', 'interviews'];
+
+const fadeIn = (delay = 0) => ({
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.45, delay }
+});
 
 const PublicProfile = () => {
   const { username } = useParams();
   const navigate = useNavigate();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "true");
-  const [profile, setProfile]   = useState(null);
-  const [stats, setStats]       = useState(null);
-  const [loading, setLoading]   = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === 'true');
+  const [profile, setProfile] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    if (!username) return;
+    if (!username) return undefined;
     let cancelled = false;
-
     (async () => {
       setLoading(true);
       setNotFound(false);
-      try {
-        const res = await userAPI.getPublicProfile(username);
-        if (cancelled) return;
-        setProfile(res.data.user);
-        setStats(res.data.stats);
-      } catch (err) {
-        if (cancelled) return;
-        if (err.response?.status === 404) {
-          setNotFound(true);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      const [p, a] = await Promise.allSettled([userAPI.getPublicProfile(username), userAPI.getPublicAnalytics(username)]);
+      if (cancelled) return;
+      if (p.status === 'fulfilled') {
+        setProfile(p.value.data.user);
+        setStats(p.value.data.stats);
+      } else if (p.reason?.response?.status === 404) {
+        setNotFound(true);
+      } else {
+        toast.error('Could not load this profile. Please try again.');
       }
+      setAnalytics(a.status === 'fulfilled' ? a.value.data : null);
+      setLoading(false);
     })();
-
     return () => { cancelled = true; };
   }, [username]);
 
-  const sidebarItems = useMemo(() => [
-    { label: 'Dashboard',         path: '/dashboard',          Icon: LayoutDashboard },
-    { label: 'Profile',           path: '/profile',            Icon: User            },
-    { label: 'Question Generator',path: '/questions/generate', Icon: Brain           },
-    { label: 'Mock Interview',    path: '/interview/mock',     Icon: PlayCircle      },
-    { label: 'Resume Interview',  path: '/interview/resume',   Icon: FileText        },
-    { label: 'Coding Practice',   path: '/coding/practice',    Icon: Code2           }
-  ], []);
+  const coding = analytics?.codingStats;
+  const streak = analytics?.streak;
+  const heatActivity = useMemo(() => {
+    const devprep = {};
+    (analytics?.activity || []).forEach(({ date, count }) => { devprep[date] = count; });
+    return { devprep };
+  }, [analytics]);
 
-  const navbarLinks = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard'          },
-    { label: 'Questions',  path: '/questions/generate' },
-    { label: 'Mock',       path: '/interview/mock'     },
-    { label: 'Resume',     path: '/interview/resume'   },
-    { label: 'Coding',     path: '/coding/practice'    }
-  ], []);
+  const achievements = useMemo(() => buildAchievements({
+    coding, streak, overview: { completedInterviews: stats?.interviewsCompleted || 0 }, performance: [], savedStats: null,
+    profileComplete: { done: 0, total: 1 }
+  }).filter((a) => PUBLIC_TRACKS.includes(a.id)), [coding, streak, stats]);
+
+  const languages = (analytics?.languageUsage || []).map((x) => ({ name: x.language, value: x.count }));
+  const categories = (analytics?.solvedCategories || []).map((x) => ({ name: x.category, value: x.count }));
+  const name = profile?.name || profile?.username || username;
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toast.success('Profile link copied');
+    } catch (_) {
+      toast.error('Could not copy the link');
+    }
+  };
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-[#0f172a] via-[#030712] to-[#020617] text-white overflow-x-hidden relative">
@@ -84,7 +97,8 @@ const PublicProfile = () => {
               onCloseMobile={() => setMobileSidebarOpen(false)}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-              items={sidebarItems}
+              items={SIDEBAR_ITEMS}
+              onNavigate={(path) => navigate(path === '/logout' ? '/profile' : path)}
               profile={{ name: 'DevPrep', avatar: '' }}
               profilePath="/profile"
             />
@@ -93,173 +107,95 @@ const PublicProfile = () => {
               <Navbar
                 brand=""
                 activeLabel={profile ? `@${profile.username}` : 'User Profile'}
-                links={navbarLinks}
+                links={NAVBAR_LINKS}
                 onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
               />
 
               <div className="mt-6">
-                {/* Loading skeleton */}
-                {loading && (
-                  <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 animate-pulse space-y-4">
-                    <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 rounded-2xl bg-white/10" />
-                      <div className="space-y-2">
-                        <div className="h-5 w-32 bg-white/10 rounded" />
-                        <div className="h-4 w-20 bg-white/5 rounded" />
-                      </div>
-                    </div>
-                    <div className="h-24 bg-white/5 rounded-xl" />
-                  </div>
-                )}
-
-                {/* Not found */}
-                {!loading && notFound && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-10 text-center"
-                  >
+                {!loading && notFound ? (
+                  <motion.div {...fadeIn(0)} className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-10 text-center">
                     <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-4">
                       <User className="w-8 h-8 text-slate-400" />
                     </div>
-                    <div className="text-xl font-semibold mb-2">User not found</div>
+                    <div className="text-xl font-semibold mb-2">Profile not found</div>
                     <p className="text-slate-400 text-sm mb-6">
-                      No user with the username <span className="text-slate-200 font-medium">@{username}</span> exists.
+                      There is no public profile for <span className="text-slate-200 font-medium">@{username}</span>. It may be private or the username may have changed.
                     </p>
                     <button
                       type="button"
                       onClick={() => navigate(-1)}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200 text-sm"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-slate-200 text-sm"
                     >
-                      <ArrowLeft className="w-4 h-4" />
-                      Go back
+                      <ArrowLeft className="w-4 h-4" /> Go back
                     </button>
                   </motion.div>
-                )}
-
-                {/* Profile card */}
-                {!loading && profile && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
-                    className="space-y-6"
-                  >
-                    {/* Header */}
-                    <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.35)]">
-                      <div className="absolute inset-0">
-                        <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-violet-600/20 blur-3xl" />
-                        <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-cyan-600/15 blur-3xl" />
-                      </div>
-                      <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
-                        {/* Avatar */}
-                        {profile.avatar ? (
-                          <img
-                            src={profile.avatar}
-                            alt={profile.name}
-                            className="w-16 h-16 rounded-2xl border border-white/10 object-cover"
-                          />
-                        ) : (
-                          <div className="w-16 h-16 rounded-2xl bg-gradient-to-r from-cyan-400/20 via-violet-400/20 to-pink-400/20 border border-white/10 flex items-center justify-center">
-                            <span className="text-xl font-semibold text-white">
-                              {(profile.name?.[0] || '?').toUpperCase()}
-                            </span>
-                          </div>
+                ) : (
+                  <div className="space-y-5">
+                    <motion.div {...fadeIn(0)}>
+                      <ProfileHero
+                        readOnly
+                        loading={loading}
+                        displayName={name}
+                        profile={profile}
+                        avatar={profile?.avatar}
+                        actions={(
+                          <>
+                            <button
+                              type="button"
+                              onClick={copyLink}
+                              className="h-10 px-4 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white text-sm font-semibold inline-flex items-center justify-center gap-2"
+                            >
+                              <Link2 className="w-4 h-4" /> Copy profile link
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => navigate(-1)}
+                              className="h-10 px-4 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200 inline-flex items-center justify-center gap-2"
+                            >
+                              <ArrowLeft className="w-4 h-4" /> Back
+                            </button>
+                          </>
                         )}
-                        <div className="min-w-0">
-                          <div className="text-2xl font-semibold truncate">{profile.name}</div>
-                          {profile.username && (
-                            <div className="text-sm text-slate-400 mt-0.5">@{profile.username}</div>
-                          )}
-                          {profile.targetRole && (
-                            <div className="text-xs text-slate-500 mt-1">{profile.targetRole}</div>
-                          )}
-                        </div>
-                        <div className="sm:ml-auto">
-                          <span className="px-3 py-1.5 rounded-xl bg-violet-600/20 border border-violet-500/30 text-xs text-violet-200">
-                            {profile.experienceLevel}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                      />
+                    </motion.div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      {/* Left: About + Skills */}
-                      <div className="lg:col-span-2 space-y-5">
-                        <div className="backdrop-blur-xl bg-[#1e1e2d]/60 border border-white/10 rounded-2xl p-5">
-                          <div className="text-sm font-semibold text-slate-200 mb-2">About</div>
-                          <p className={`text-sm whitespace-pre-wrap ${profile.bio ? 'text-slate-400' : 'text-slate-500 italic'}`}>
-                            {profile.bio || 'No bio provided.'}
-                          </p>
-                        </div>
+                    <motion.div {...fadeIn(0.05)} className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                      <Kpi loading={loading} icon={CheckCircle2} iconClass="text-emerald-400" label="Problems solved"
+                        value={coding?.totalSolved ?? stats?.problemsSolved ?? 0} sub={coding?.totalProblems ? `of ${coding.totalProblems} on DevPrep` : null} />
+                      <Kpi loading={loading} icon={TrendingUp} iconClass="text-cyan-400" label="Acceptance rate"
+                        value={`${coding?.acceptanceRate || 0}%`} sub={`${coding?.totalSubmissions || 0} submissions`} />
+                      <Kpi loading={loading} icon={Flame} iconClass="text-orange-400" label="Current streak"
+                        value={`${streak?.currentStreak || 0}d`} sub={streak?.lastActiveDate ? `Last active ${new Date(`${streak.lastActiveDate}T00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'No activity yet'} />
+                      <Kpi loading={loading} icon={Zap} iconClass="text-violet-400" label="Best streak"
+                        value={`${streak?.longestStreak || 0}d`} sub="all time" />
+                      <Kpi loading={loading} icon={MessageSquare} iconClass="text-pink-400" label="Interviews completed"
+                        value={stats?.interviewsCompleted ?? 0} sub="AI mock interviews" />
+                      <Kpi loading={loading} icon={CalendarDays} iconClass="text-amber-400" label="Member since"
+                        value={profile?.memberSince ? new Date(profile.memberSince).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '—'} />
+                    </motion.div>
 
-                        <div className="backdrop-blur-xl bg-[#1e1e2d]/60 border border-white/10 rounded-2xl p-5">
-                          <div className="text-sm font-semibold text-slate-200 mb-3">Skills</div>
-                          {profile.skills?.length > 0 ? (
-                            <div className="flex flex-wrap gap-2">
-                              {profile.skills.map((s) => (
-                                <span
-                                  key={s}
-                                  className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-200"
-                                >
-                                  {s}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-slate-500 italic">No skills added yet.</p>
-                          )}
-                        </div>
+                    <motion.div {...fadeIn(0.1)}>
+                      <Card title="Coding activity" icon={CalendarDays} subtitle="Submissions on DevPrep">
+                        {loading ? <div className="h-40 rounded-xl bg-white/5 animate-pulse" /> : (
+                          <YearHeatmap sources={[DEVPREP_SOURCE]} activity={heatActivity} title={`${name}'s coding activity`} emptyHint="No submissions in this range." />
+                        )}
+                      </Card>
+                    </motion.div>
 
-                      </div>
+                    <motion.div {...fadeIn(0.15)} className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                      <div className="xl:col-span-2"><ProblemSolvingCard loading={loading} coding={coding} /></div>
+                      <RecentSolvedCard loading={loading} items={analytics?.recentSolved} />
+                    </motion.div>
 
-                      {/* Right: Stats */}
-                      <div className="space-y-5">
-                        <div className="backdrop-blur-xl bg-[#1e1e2d]/60 border border-white/10 rounded-2xl p-5">
-                          <div className="text-sm font-semibold text-slate-200 mb-4">Statistics</div>
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3">
-                              <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                                Problems solved
-                              </div>
-                              <div className="text-lg font-bold text-white">
-                                {stats?.problemsSolved ?? 0}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3">
-                              <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <PlayCircle className="w-4 h-4 text-violet-400" />
-                                Interviews done
-                              </div>
-                              <div className="text-lg font-bold text-white">
-                                {stats?.interviewsCompleted ?? 0}
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-4 py-3">
-                              <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <Calendar className="w-4 h-4 text-cyan-400" />
-                                Member since
-                              </div>
-                              <div className="text-sm font-medium text-slate-200">
-                                {profile.memberSince
-                                  ? new Date(profile.memberSince).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })
-                                  : '–'}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-6">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="text-lg font-semibold">Coding Analytics</div>
-                        <div className="text-xs text-slate-500">LeetCode-style</div>
-                      </div>
-                      <PublicProfileAnalytics username={profile.username || username} />
-                    </div>
-                  </motion.div>
+                    <motion.div {...fadeIn(0.2)} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      <BreakdownCard title="Languages" icon={Code2} subtitle="Submissions by language" items={languages} loading={loading} empty="No submissions yet" color="#22d3ee" />
+                      <BreakdownCard title="Solved by category" icon={Layers} subtitle="Accepted problems by topic" items={categories} loading={loading} empty="No solved problems yet" color="#a78bfa" />
+                    </motion.div>
+
+                    <motion.div {...fadeIn(0.25)}>
+                      <AchievementsCard loading={loading} achievements={achievements} />
+                    </motion.div>
+                  </div>
                 )}
               </div>
 

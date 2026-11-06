@@ -4,26 +4,12 @@ const path = require('path');
 const pdfParse = require('pdf-parse');
 
 const Resume = require('../models/Resume');
-const User = require('../models/User');
-const { clerkClient } = require('@clerk/clerk-sdk-node');
-const { upsertUserFromClerkApi, getClerkUserIdFromAuth } = require('./clerkSyncController');
+const { resolveUser } = require('../utils/resolveUser');
 const { groqChat } = require('../utils/aiService');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function resolveUser(req) {
-  const clerkUserId = getClerkUserIdFromAuth(req);
-  if (!clerkUserId) return null;
-
-  let user = await User.findOne({ clerkUserId });
-  if (!user) {
-    const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    user = await upsertUserFromClerkApi(clerkUser);
-  }
-  return user;
-}
 
 // ---------------------------------------------------------------------------
 // AI extraction prompt
@@ -150,55 +136,60 @@ function parseExtractionResponse(aiResponse) {
   };
 }
 
-/**
- * Run PDF parsing + AI extraction and update the resume document.
- * Designed to run asynchronously AFTER the HTTP response is sent.
- *
- * @param {string} resumeId   - MongoDB _id of the resume document
- * @param {string} filePath   - Absolute path to the uploaded PDF on disk
- */
-async function runExtractionAsync(resumeId, filePath) {
+// An extraction still 'pending' after this long is assumed dead and retried
+const EXTRACTION_STALE_MS = 2 * 60 * 1000;
+
+async function extractPdfText(buffer) {
   try {
-    // Parse PDF
-    let rawText = '';
-    try {
-      const fileBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(fileBuffer);
-      rawText = data && data.text ? data.text.trim() : '';
-    } catch (pdfErr) {
-      // If PDF parse fails, leave rawText empty — AI will fail gracefully
-    }
+    const data = await pdfParse(buffer);
+    return data && data.text ? data.text.trim() : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * Run the AI extraction for a resume whose text is already stored and update
+ * the document. Runs after the HTTP response is sent.
+ */
+async function runExtractionAsync(resumeId) {
+  try {
+    const resume = await Resume.findById(resumeId).select('rawText');
+    if (!resume) return;
+    const rawText = resume.rawText || '';
 
     let extractedData = { skills: [], projects: [], experience: [], education: [], awards: [], certifications: [], competitiveProgramming: [] };
     let extractionStatus = 'failed';
 
     if (rawText.length >= 30) {
       try {
-        const prompt = buildExtractionPrompt(rawText);
         const aiResponse = await groqChat(
           [
             { role: 'system', content: 'You are a resume parsing expert. Respond only with valid JSON.' },
-            { role: 'user', content: prompt },
+            { role: 'user', content: buildExtractionPrompt(rawText) },
           ],
           { temperature: 0.3, maxTokens: 4096 }
         );
-
         extractedData = parseExtractionResponse(aiResponse);
         extractionStatus = 'success';
-      } catch (_) {
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[resume] extraction failed:', err.message);
         extractionStatus = 'failed';
       }
     }
 
-    await Resume.findByIdAndUpdate(resumeId, {
-      rawText,
-      extractedData,
-      extractionStatus,
-    });
+    await Resume.findByIdAndUpdate(resumeId, { extractedData, extractionStatus, extractionStartedAt: null });
   } catch (_) {
-    // Best-effort: if anything fails, mark as failed
-    await Resume.findByIdAndUpdate(resumeId, { extractionStatus: 'failed' }).catch(() => {});
+    await Resume.findByIdAndUpdate(resumeId, { extractionStatus: 'failed', extractionStartedAt: null }).catch(() => {});
   }
+}
+
+function startExtraction(resumeId) {
+  // setImmediate gives Node's event loop a tick to flush the response first
+  setImmediate(() => {
+    runExtractionAsync(resumeId);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -206,32 +197,44 @@ async function runExtractionAsync(resumeId, filePath) {
 // ---------------------------------------------------------------------------
 
 /**
- * PERFORMANCE FIX (Phase 2):
- * Resume upload now returns immediately with status 'pending'.
- * PDF parsing and Groq AI extraction run asynchronously after the response
- * is sent. The client can poll GET /api/resume to check extractionStatus.
+ * Upload: the PDF is parsed in memory (never written to disk, which is wiped
+ * on every deploy on Render/Railway), the text is saved, and the slower AI
+ * extraction runs after the response. The client polls GET /api/resume.
  */
 async function uploadResume(req, res, next) {
   try {
     const user = await resolveUser(req);
     if (!user) return res.status(401).json({ message: 'Not authorized' });
 
-    if (!req.file) {
+    if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: 'Resume file is required' });
     }
 
-    // Create the resume record immediately with 'pending' status
+    // Real PDFs start with %PDF- (the browser-sent MIME type can't be trusted)
+    if (req.file.buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      return res.status(400).json({ message: 'Only PDF files are allowed' });
+    }
+
+    const rawText = await extractPdfText(req.file.buffer);
+    if (rawText.length < 30) {
+      return res.status(422).json({
+        message: 'Could not read text from this PDF. If it is a scanned image, export it as a text PDF and try again.'
+      });
+    }
+
     const resume = await Resume.create({
       userId: user._id,
-      fileName: req.file.originalname,
-      filePath: req.file.path,
-      rawText: '',
+      fileName: String(req.file.originalname || 'resume.pdf').slice(0, 255),
+      rawText,
       extractedData: { skills: [], projects: [], experience: [], education: [] },
       extractionStatus: 'pending',
+      extractionStartedAt: new Date(),
       uploadDate: new Date(),
     });
 
-    // Respond immediately — do NOT block on PDF parse or AI call
+    // Keep only the latest resume per user
+    await Resume.deleteMany({ userId: user._id, _id: { $ne: resume._id } });
+
     res.status(201).json({
       resume: {
         id: resume._id,
@@ -242,11 +245,8 @@ async function uploadResume(req, res, next) {
       },
     });
 
-    // Run extraction asynchronously after response is sent
-    // setImmediate gives Node's event loop a tick to flush the response first
-    setImmediate(() => {
-      runExtractionAsync(resume._id, req.file.path);
-    });
+    startExtraction(resume._id);
+    return undefined;
   } catch (err) {
     return next(err);
   }
@@ -257,15 +257,31 @@ async function getResume(req, res, next) {
     const user = await resolveUser(req);
     if (!user) return res.status(401).json({ message: 'Not authorized' });
 
-    const resume = await Resume.findOne({ userId: user._id })
-      .sort({ uploadDate: -1 })
-      .select('-rawText');
+    const resume = await Resume.findOne({ userId: user._id }).sort({ uploadDate: -1 });
 
     if (!resume) {
       return res.status(404).json({ message: 'No resume found. Please upload one first.' });
     }
 
-    return res.status(200).json({ resume });
+    // Recover extractions that died with a server restart: retry them once
+    const startedAt = resume.extractionStartedAt || resume.updatedAt;
+    if (resume.extractionStatus === 'pending' && Date.now() - new Date(startedAt).getTime() > EXTRACTION_STALE_MS) {
+      const claimed = await Resume.findOneAndUpdate(
+        { _id: resume._id, extractionStatus: 'pending', extractionStartedAt: resume.extractionStartedAt },
+        { $set: { extractionStartedAt: new Date() } },
+        { new: true }
+      );
+      if (claimed && resume.rawText) {
+        startExtraction(resume._id);
+      } else if (claimed) {
+        await Resume.updateOne({ _id: resume._id }, { $set: { extractionStatus: 'failed', extractionStartedAt: null } });
+        resume.extractionStatus = 'failed';
+      }
+    }
+
+    const view = resume.toObject();
+    delete view.rawText;
+    return res.status(200).json({ resume: view });
   } catch (err) {
     return next(err);
   }

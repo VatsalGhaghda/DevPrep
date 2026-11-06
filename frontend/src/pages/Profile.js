@@ -4,26 +4,29 @@ import { useNavigate } from 'react-router-dom';
 import { useClerk, useUser } from '@clerk/clerk-react';
 import { useReadyAuth } from '../hooks/useReadyAuth';
 import { toast } from 'sonner';
-import {
-  LayoutDashboard,
-  FileText,
-  Code2,
-  PlayCircle,
-  Brain,
-  User,
-  Shield,
-  BarChart3,
-  PencilLine,
-  ChevronRight
-} from 'lucide-react';
+import { CalendarDays, Code2, Layers } from 'lucide-react';
 import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
 import Navbar from '../components/layout/Navbar';
 import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
-import ProfileAnalytics from '../components/ProfileAnalytics';
-import ProfileInsightsPanel from '../components/ProfileInsightsPanel';
-import { clerkAPI, questionsAPI, analyticsAPI } from '../services/api';
+import { Card } from '../components/devAnalytics/ui';
+import YearHeatmap from '../components/devAnalytics/YearHeatmap';
+import {
+  ProfileHero, KpiStrip, ProblemSolvingCard, BreakdownCard, InterviewPerformanceCard, CodingProfilesCard,
+  RecentActivityCard, AchievementsCard, buildAchievements
+} from '../components/profile/ProfileSections';
+import { clerkAPI, questionsAPI, analyticsAPI, devAnalyticsAPI } from '../services/api';
+import { PLATFORMS, platformSources } from '../utils/devAnalytics';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
+
+const DEVPREP_SOURCE = { id: 'devprep', label: 'DevPrep', color: '#a78bfa', unit: 'submissions' };
+
+const fadeIn = (delay = 0) => ({
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.45, delay }
+});
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -32,62 +35,45 @@ const Profile = () => {
   const { signOut } = useClerk();
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "true");
-  const [dbProfile, setDbProfile]   = useState(null);
-  const [savedStats, setSavedStats] = useState(null);
-  const [interviewStats, setInterviewStats] = useState(null);
-  const [profileInsights, setProfileInsights] = useState(null);
-  const [clerkToken, setClerkToken] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === 'true');
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
-  const [logoutLoading, setLogoutLoading]         = useState(false);
-  const [dataLoading, setDataLoading]             = useState(true);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState({});
 
-  const displayName =
-    user?.fullName ||
-    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
-    user?.username ||
-    'User';
-
-  const email = user?.primaryEmailAddress?.emailAddress || '';
-
-  /* ── Fetch profile + stats on mount ── */
+  /* ── Load everything in parallel; each part fails on its own ── */
   useEffect(() => {
-    if (!ready) return;
-
+    if (!ready) return undefined;
+    let cancelled = false;
     (async () => {
       try {
         const token = await getToken();
         if (!token) return;
-
-        // Store token for <ProfileAnalytics />
-        setClerkToken(token);
-
-        // Run all fetches in parallel
-        const [profileRes, savedRes, overviewRes, insightsRes] = await Promise.allSettled([
-          clerkAPI.getProfile(token),
-          questionsAPI.getSavedStats(token),
-          analyticsAPI.getOverview(token),
-          analyticsAPI.getProfileInsights(token)
-        ]);
-
-        if (profileRes.status === 'fulfilled') {
-          setDbProfile(profileRes.value.data?.user || null);
-        }
-        if (savedRes.status === 'fulfilled') {
-          setSavedStats(savedRes.value.data || null);
-        }
-        if (overviewRes.status === 'fulfilled') {
-          setInterviewStats(overviewRes.value.data?.overview || null);
-        }
-        if (insightsRes.status === 'fulfilled') {
-          setProfileInsights(insightsRes.value.data?.insights || null);
-        }
-      } catch (_) {
-        // Non-fatal – display shows zeros / fallbacks
+        const calls = {
+          profile: clerkAPI.getProfile(token).then((r) => r.data?.user || null),
+          savedStats: questionsAPI.getSavedStats(token).then((r) => r.data || null),
+          overview: analyticsAPI.getOverview(token).then((r) => r.data?.overview || null),
+          insights: analyticsAPI.getProfileInsights(token).then((r) => r.data?.insights || null),
+          coding: analyticsAPI.getCodingStats(token).then((r) => r.data?.codingStats || null),
+          activity: analyticsAPI.getSubmissionActivity(token).then((r) => r.data?.activity || []),
+          streak: analyticsAPI.getStreak(token).then((r) => r.data?.streak || null),
+          performance: analyticsAPI.getPerformance(token).then((r) => r.data?.performance?.points || []),
+          topics: analyticsAPI.getTopics(token).then((r) => r.data?.topics || []),
+          recent: analyticsAPI.getRecentActivity(token).then((r) => r.data?.activity || []),
+          dev: devAnalyticsAPI.get(token).then((r) => r.data || null)
+        };
+        const keys = Object.keys(calls);
+        const results = await Promise.allSettled(Object.values(calls));
+        if (cancelled) return;
+        const next = {};
+        results.forEach((r, i) => { next[keys[i]] = r.status === 'fulfilled' ? r.value : null; });
+        setData(next);
+        if (!next.profile && !next.coding) toast.error('Could not load your profile. Please refresh the page.');
       } finally {
-        setDataLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [ready, getToken]);
 
   const handleLogout = async () => {
@@ -101,39 +87,40 @@ const Profile = () => {
     }
   };
 
-  const profileData = useMemo(() => {
-    const md = user?.publicMetadata || {};
-    const experienceLevel =
-      (dbProfile && dbProfile.experienceLevel) ||
-      (typeof md.experienceLevel === 'string' ? md.experienceLevel : 'Beginner');
-    const targetRole =
-      (dbProfile && dbProfile.targetRole) ||
-      (typeof md.targetRole === 'string' ? md.targetRole : 'Frontend Developer');
-    const skills =
-      (dbProfile && Array.isArray(dbProfile.skills) ? dbProfile.skills : null) ||
-      (Array.isArray(md.skills) ? md.skills.filter((s) => typeof s === 'string') : ['React', 'JavaScript', 'DSA']);
-    const bio    = (dbProfile && typeof dbProfile.bio    === 'string' ? dbProfile.bio    : '') || '';
-    const avatar = (dbProfile && typeof dbProfile.avatar === 'string' ? dbProfile.avatar : '') || '';
+  const profile = data.profile;
+  const displayName = profile?.name || user?.fullName
+    || [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username || 'User';
+  const email = profile?.email || user?.primaryEmailAddress?.emailAddress || '';
+  const avatar = profile?.avatar || user?.imageUrl || '';
 
-    return { experienceLevel, targetRole, skills: skills.slice(0, 12), bio, avatar };
-  }, [dbProfile, user]);
+  // Only real, saved fields count; nothing is filled in with defaults
+  const completeness = useMemo(() => {
+    const checks = [
+      ['photo', Boolean(profile?.avatar || user?.imageUrl)],
+      ['bio', Boolean(profile?.bio)],
+      ['3+ skills', (profile?.skills || []).length >= 3],
+      ['target role', Boolean(profile?.targetRole)],
+      ['username', Boolean(profile?.username)]
+    ];
+    return { done: checks.filter(([, ok]) => ok).length, total: checks.length, missing: checks.filter(([, ok]) => !ok).map(([k]) => k) };
+  }, [profile, user]);
 
-  const sidebarItems = useMemo(() => [
-    { label: 'Dashboard',          path: '/dashboard',          Icon: LayoutDashboard },
-    { label: 'Profile',            path: '/profile',            Icon: User            },
-    { label: 'Question Generator', path: '/questions/generate', Icon: Brain           },
-    { label: 'Mock Interview',     path: '/interview/mock',     Icon: PlayCircle      },
-    { label: 'Resume Interview',   path: '/interview/resume',   Icon: FileText        },
-    { label: 'Coding Practice',    path: '/coding/practice',    Icon: Code2           }
-  ], []);
+  // Heatmap: DevPrep submissions plus any connected platform
+  const connected = useMemo(() => PLATFORMS.filter((p) => data.dev?.connections?.[p]), [data.dev]);
+  const heatSources = useMemo(() => [DEVPREP_SOURCE, ...platformSources(connected)], [connected]);
+  const heatActivity = useMemo(() => {
+    const devprep = {};
+    (data.activity || []).forEach(({ date, count }) => { devprep[date] = count; });
+    return { ...(data.dev?.activity || {}), devprep };
+  }, [data.activity, data.dev]);
 
-  const navbarLinks = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard'          },
-    { label: 'Questions',  path: '/questions/generate' },
-    { label: 'Mock',       path: '/interview/mock'     },
-    { label: 'Resume',     path: '/interview/resume'   },
-    { label: 'Coding',     path: '/coding/practice'    }
-  ], []);
+  const achievements = useMemo(() => buildAchievements({
+    coding: data.coding, streak: data.streak, overview: data.overview, performance: data.performance,
+    savedStats: data.savedStats, profileComplete: completeness
+  }), [data, completeness]);
+
+  const languages = (data.insights?.languageUsage || []).map((x) => ({ name: x.language, value: x.count }));
+  const categories = (data.insights?.solvedCategories || []).map((x) => ({ name: x.category, value: x.count }));
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-[#0f172a] via-[#030712] to-[#020617] text-white overflow-x-hidden relative">
@@ -147,12 +134,12 @@ const Profile = () => {
               onCloseMobile={() => setMobileSidebarOpen(false)}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-              items={sidebarItems}
+              items={SIDEBAR_ITEMS}
               onNavigate={(path) => {
                 if (path === '/logout') { setConfirmLogoutOpen(true); return; }
                 navigate(path);
               }}
-              profile={{ name: displayName, avatar: profileData.avatar || user?.imageUrl || '' }}
+              profile={{ name: displayName, avatar }}
               profilePath="/profile"
             />
 
@@ -160,205 +147,65 @@ const Profile = () => {
               <Navbar
                 brand=""
                 activeLabel="Profile"
-                links={navbarLinks}
+                links={NAVBAR_LINKS}
                 onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-                avatarUrl={profileData.avatar || user?.imageUrl || ''}
+                avatarUrl={avatar}
                 onLogout={() => setConfirmLogoutOpen(true)}
               />
 
-              {/* ── Profile header card ── */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6 }}
-                className="mt-6 relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.35)]"
-              >
-                <div className="absolute inset-0">
-                  <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-violet-600/20 blur-3xl" />
-                  <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-cyan-600/15 blur-3xl" />
-                </div>
+              <div className="mt-6 space-y-5">
+                <motion.div {...fadeIn(0)}>
+                  <ProfileHero
+                    loading={loading}
+                    displayName={displayName}
+                    email={email}
+                    profile={profile}
+                    avatar={avatar}
+                    completeness={completeness}
+                    onEdit={() => navigate('/profile/edit')}
+                  />
+                </motion.div>
 
-                <div className="relative p-6 sm:p-7 flex flex-col sm:flex-row sm:items-center gap-5">
-                  <div className="flex items-center gap-4 min-w-0">
-                    {dataLoading ? (
-                      <div className="w-14 h-14 rounded-2xl bg-white/10 animate-pulse border border-white/10" />
-                    ) : profileData.avatar ? (
-                      <img
-                        src={profileData.avatar}
-                        alt="Avatar"
-                        className="w-14 h-14 rounded-2xl border border-white/10 object-cover"
+                <motion.div {...fadeIn(0.05)}>
+                  <KpiStrip loading={loading} coding={data.coding} streak={data.streak} overview={data.overview} savedStats={data.savedStats} />
+                </motion.div>
+
+                <motion.div {...fadeIn(0.1)}>
+                  <Card title="Coding activity" icon={CalendarDays} subtitle={connected.length ? 'DevPrep submissions and your connected platforms' : 'Your DevPrep submissions'}>
+                    {loading ? <div className="h-40 rounded-xl bg-white/5 animate-pulse" /> : (
+                      <YearHeatmap
+                        sources={heatSources}
+                        activity={heatActivity}
+                        title="Coding activity"
+                        emptyHint="No activity in this range yet. Submissions in Coding Practice show up here."
                       />
-                    ) : (
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-r from-cyan-400/20 via-violet-400/20 to-pink-400/20 border border-white/10 flex items-center justify-center">
-                        <span className="text-lg font-semibold text-white">
-                          {(displayName?.[0] || 'U').toUpperCase()}
-                        </span>
-                      </div>
                     )}
-                    <div className="min-w-0">
-                      {dataLoading ? (
-                        <>
-                          <div className="h-8 w-48 bg-white/10 rounded-lg animate-pulse" />
-                          <div className="h-4 w-32 bg-white/10 rounded animate-pulse mt-2" />
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-xl sm:text-2xl font-semibold truncate">{displayName}</div>
-                          <div className="text-sm text-slate-400 truncate">{email}</div>
-                        </>
-                      )}
-                    </div>
+                  </Card>
+                </motion.div>
+
+                <motion.div {...fadeIn(0.15)} className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                  <div className="xl:col-span-2"><ProblemSolvingCard loading={loading} coding={data.coding} /></div>
+                  <CodingProfilesCard loading={loading} dev={data.dev} onOpen={() => navigate(connected.length ? '/analytics' : '/analytics?tab=connections')} />
+                </motion.div>
+
+                <motion.div {...fadeIn(0.2)} className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <BreakdownCard title="Languages" icon={Code2} subtitle="Your DevPrep submissions by language" items={languages} loading={loading} empty="No submissions yet" color="#22d3ee" />
+                  <BreakdownCard title="Solved by category" icon={Layers} subtitle="Accepted problems by topic" items={categories} loading={loading} empty="No solved problems yet" color="#a78bfa" />
+                </motion.div>
+
+                <motion.div {...fadeIn(0.25)} className="grid grid-cols-1 xl:grid-cols-5 gap-5">
+                  <div className="xl:col-span-3">
+                    <InterviewPerformanceCard loading={loading} overview={data.overview} performance={data.performance} topics={data.topics} />
                   </div>
-
-                  <div className="sm:ml-auto flex items-center gap-3">
-                    <motion.button
-                      type="button"
-                      whileHover={{ y: -1 }}
-                      whileTap={{ scale: 0.98 }}
-                      className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white font-semibold inline-flex items-center gap-2 transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.2)] hover:shadow-[0_0_25px_rgba(139,92,246,0.35)]"
-                      onClick={() => navigate('/profile/edit')}
-                    >
-                      <PencilLine className="w-4 h-4" />
-                      Edit profile
-                    </motion.button>
+                  <div className="xl:col-span-2">
+                    <RecentActivityCard loading={loading} items={data.recent} />
                   </div>
-                </div>
-              </motion.div>
+                </motion.div>
 
-              {/* ── Main grid ── */}
-              <div className="mt-6 grid grid-cols-1 lg:grid-cols-10 gap-6">
-                {/* Left column: personal info + account settings */}
-                <div className="lg:col-span-7 space-y-6">
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, delay: 0.05 }}
-                    className="rounded-2xl border border-white/10 bg-[#1e1e2d]/60 backdrop-blur-xl p-5"
-                  >
-                    <div className="text-lg font-semibold">Personal information</div>
-                    <div className="text-sm text-slate-400 mt-1">Your core profile details</div>
-
-                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Name</div>
-                        {dataLoading ? <div className="h-4 w-32 bg-white/10 rounded animate-pulse mt-1.5" /> : <div className="text-sm font-semibold text-slate-100 mt-1 truncate">{displayName}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Email</div>
-                        {dataLoading ? <div className="h-4 w-40 bg-white/10 rounded animate-pulse mt-1.5" /> : <div className="text-sm font-semibold text-slate-100 mt-1 truncate">{email || '-'}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Experience level</div>
-                        {dataLoading ? <div className="h-4 w-24 bg-white/10 rounded animate-pulse mt-1.5" /> : <div className="text-sm font-semibold text-slate-100 mt-1">{profileData.experienceLevel}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Target role</div>
-                        {dataLoading ? <div className="h-4 w-32 bg-white/10 rounded animate-pulse mt-1.5" /> : <div className="text-sm font-semibold text-slate-100 mt-1 truncate">{profileData.targetRole}</div>}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 p-4">
-                      <div className="text-xs text-slate-500">Skills</div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {dataLoading ? (
-                          [1, 2, 3, 4].map((i) => (
-                            <div key={i} className="h-7 w-20 bg-white/10 rounded-xl animate-pulse" />
-                          ))
-                        ) : profileData.skills.map((s) => (
-                          <div key={s} className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-200">
-                            {s}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {(dataLoading || profileData.bio) && (
-                      <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">About</div>
-                        {dataLoading ? (
-                          <div className="mt-2 space-y-2">
-                            <div className="h-3 w-full bg-white/10 rounded animate-pulse" />
-                            <div className="h-3 w-4/5 bg-white/10 rounded animate-pulse" />
-                          </div>
-                        ) : (
-                          <div className="mt-2 text-sm text-slate-200 whitespace-pre-wrap">{profileData.bio}</div>
-                        )}
-                      </div>
-                    )}
-                  </motion.div>
-
-                                  </div>
-                  
-                {/* Right column: stat counters + go-to-dashboard shortcut */}
-                <div className="lg:col-span-3 space-y-6">
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, delay: 0.06 }}
-                    className="rounded-2xl border border-white/10 bg-[#1e1e2d]/60 backdrop-blur-xl p-5"
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="text-lg font-semibold">Statistics</div>
-                        <div className="text-sm text-slate-400 mt-1">Your recent activity</div>
-                      </div>
-                      <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                        <BarChart3 className="w-5 h-5 text-slate-300" />
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Questions saved</div>
-                        {dataLoading ? <div className="h-6 w-12 bg-white/10 rounded animate-pulse mt-1" /> : <div className="text-xl font-semibold text-slate-100 mt-1">{Number(savedStats?.totalSaved) || 0}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Mock sessions</div>
-                        {dataLoading ? <div className="h-6 w-12 bg-white/10 rounded animate-pulse mt-1" /> : <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.mock?.totalSessions) || 0}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Resume interviews</div>
-                        {dataLoading ? <div className="h-6 w-12 bg-white/10 rounded animate-pulse mt-1" /> : <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.mock?.resumeInterviews) || 0}</div>}
-                      </div>
-                      <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
-                        <div className="text-xs text-slate-500">Coding solved</div>
-                        {dataLoading ? <div className="h-6 w-12 bg-white/10 rounded animate-pulse mt-1" /> : <div className="text-xl font-semibold text-slate-100 mt-1">{Number(profileInsights?.coding?.totalSolved) || 0}</div>}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="mt-4 w-full flex items-center justify-between px-4 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200"
-                      onClick={() => navigate('/dashboard')}
-                    >
-                      <span>Go to dashboard</span>
-                      <ChevronRight className="w-4 h-4 text-slate-400" />
-                    </button>
-                  </motion.div>
-                </div>
+                <motion.div {...fadeIn(0.3)}>
+                  <AchievementsCard loading={loading} achievements={achievements} />
+                </motion.div>
               </div>
-
-              {/* ── Analytics section (LeetCode-style) ── */}
-              {clerkToken && (
-                <div className="mt-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="text-lg font-semibold">Coding Analytics</div>
-                    <div className="text-xs text-slate-500">LeetCode-style</div>
-                  </div>
-                  <ProfileAnalytics clerkToken={clerkToken} />
-                </div>
-              )}
-
-              {/* ── Profile insights (graphs) ── */}
-              {clerkToken && (
-                <div className="mt-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="text-lg font-semibold">Profile Insights</div>
-                    <div className="text-xs text-slate-500">Your progress breakdown</div>
-                  </div>
-                  <ProfileInsightsPanel clerkToken={clerkToken} />
-                </div>
-              )}
 
               <div className="mt-8">
                 <Footer />
@@ -368,7 +215,6 @@ const Profile = () => {
         </div>
       </div>
 
-      {/* ── Logout confirmation modal ── */}
       <Modal
         open={confirmLogoutOpen}
         title="Confirm Logout"
@@ -385,7 +231,7 @@ const Profile = () => {
             </button>
             <button
               type="button"
-              className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-[0_0_15px_rgba(139,92,246,0.2)] hover:shadow-[0_0_25px_rgba(139,92,246,0.35)]"
+              className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={handleLogout}
               disabled={logoutLoading}
             >

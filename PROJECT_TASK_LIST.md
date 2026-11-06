@@ -13,6 +13,32 @@
 
 ---
 
+## 📌 Current Status (updated 2026-11-06)
+
+The core platform is built and working locally. The phase lists below are the original plan; this section records what has been done since and what is still open.
+
+### ✅ Done
+- **Security and bug fixes (2026-11-05):** code runs in a locked-down Docker sandbox per job; legacy JWT auth and the old `/api/interviews` API removed; auto-generated, editable usernames; profiles are private unless `isProfilePublic` is on; resumes parsed in memory (PDFs not stored); failed AI evaluations can be retried; analytics respect the user's time zone (`?tz=`); rate limits on code execution, AI and public endpoints.
+- **Voice interviews:** the interviewer speaks its questions; answers are recorded and transcribed with Groq Whisper (works for technical, HR, mixed and resume-based interviews).
+- **Interview start flow:** proctored interviews open with a camera, microphone and speaker check. The session is created as `ready`, and the first question and the timer only start when the candidate presses Start (`POST /api/mock-interviews/:id/begin`).
+- **Dev Analytics (`/analytics`):** link GitHub, LeetCode and Codeforces; per-platform and combined insights, contest history and upcoming contests; compact, scrollable list cards.
+- **Yearly activity heatmap:** one continuous LeetCode-style strip for the last 12 months or any year, split into months, with platform filters and a per-day breakdown on hover.
+- **Profile page (`/profile`):** rebuilt with real data only: completeness meter, stats, heatmap, problem solving, languages, categories, interview performance, linked profiles, recent activity and achievements.
+- **Public profile (`/profile/:username`):** same components as the own profile, read-only, with recently solved problems; linked coding accounts are not shown publicly.
+- **Dashboard (`/dashboard`):** greeting with streak and this week's activity, key stats, practice cards with live numbers, next-step suggestions, yearly heatmap and recent activity.
+- **Coding Practice Run/Submit fix:** on a development machine without Docker, code now runs locally instead of failing with 503; "Run with Custom Input" sends the custom input only from its own button.
+- **Backend tests:** `npm test` in `backend` (26 tests: utils, executor, dev analytics, interview start flow, coding run/submit).
+
+### 🔜 Open
+- [ ] Deploy the backend on a VM with Docker (Render cannot run the sandbox); frontend stays on Vercel.
+- [ ] Add the CI workflow (`.github/workflows/ci.yml`).
+- [ ] Delete unused legacy files (e.g. `frontend/src/components/PublicProfileAnalytics.js`, `ProfileAnalytics.js`, `ProfileInsightsPanel.js`, old heatmap components).
+- [ ] Admin/faculty UI (the admin API exists, there are no admin pages).
+- [ ] Frontend automated tests.
+- [ ] Optional: let users opt in to showing linked GitHub/LeetCode/Codeforces on their public profile.
+
+---
+
 ## 🎨 Phase 2: Frontend Development
 
 ### 📱 Required UI Pages & Components
@@ -1284,7 +1310,7 @@ Additional endpoints:
    - i18n implementation
    - Translated content
 
-7. **Voice Input** (Advanced - Optional)
+7. **Voice Input** (Advanced - Optional) ✅ Done
    - Speech-to-text for answers
    - Voice-based interviews
 
@@ -1318,15 +1344,15 @@ Additional endpoints:
 - ✅ Phase 8: Deployment
 
 ### Priority 2 (Enhanced Features):
-- Phase 5.4: Resume Processing
-- Phase 5.5: Coding Module
-- Phase 5.6: Analytics
-- Phase 5.7: HR Interview
+- ✅ Phase 5.4: Resume Processing
+- ✅ Phase 5.5: Coding Module
+- ✅ Phase 5.6: Analytics
+- ✅ Phase 5.7: HR Interview
 
 ### Priority 3 (Nice to Have):
-- Phase 2.13: Admin Panel
-- Phase 7: Testing
-- Additional features from missing features list
+- ⏳ Phase 2.13: Admin Panel (API done, UI not started)
+- ⏳ Phase 7: Testing (backend tests done, frontend tests open)
+- ✅ Voice input, achievement badges, public profile sharing (from the missing features list)
 
 ---
 
@@ -1359,7 +1385,7 @@ Additional endpoints:
 
 ---
 
-**Last Updated:** [Current Date]
-**Status:** Planning Phase
-**Next Steps:** Begin Phase 2.1 - Project Initialization
+**Last Updated:** 2026-11-06
+**Status:** Core features complete, running locally
+**Next Steps:** Deploy the backend on a VM with Docker, add CI, remove unused legacy files
 

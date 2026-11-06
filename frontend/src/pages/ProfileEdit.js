@@ -21,6 +21,7 @@ import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
 import { clerkAPI } from '../services/api';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
 
 const EXPERIENCE_LEVELS = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
 
@@ -70,6 +71,8 @@ const ProfileEdit = () => {
   const [targetRole, setTargetRole] = useState('');
   const [skills, setSkills] = useState([]);
   const [bio, setBio] = useState('');
+  const [username, setUsername] = useState('');
+  const [isProfilePublic, setIsProfilePublic] = useState(true);
 
   const [skillInput, setSkillInput] = useState('');
   const fileInputRef = useRef(null);
@@ -99,28 +102,9 @@ const ProfileEdit = () => {
     }
   };
 
-  const sidebarItems = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
-      { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
-      { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
-      { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
-    ],
-    []
-  );
+  const sidebarItems = SIDEBAR_ITEMS;
 
-  const navbarLinks = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard' },
-      { label: 'Questions', path: '/questions/generate' },
-      { label: 'Mock', path: '/interview/mock' },
-      { label: 'Resume', path: '/interview/resume' },
-      { label: 'Coding', path: '/coding/practice' }
-    ],
-    []
-  );
+  const navbarLinks = NAVBAR_LINKS;
 
   useEffect(() => {
     if (!ready) return;
@@ -144,6 +128,8 @@ const ProfileEdit = () => {
         setTargetRole(dbUser?.targetRole || '');
         setSkills(normalizeSkills(dbUser?.skills || []));
         setBio(dbUser?.bio || '');
+        setUsername(dbUser?.username || '');
+        setIsProfilePublic(dbUser?.isProfilePublic !== false);
       } catch (_) {
         setAvatar(user?.imageUrl || '');
         setName(displayNameFallback);
@@ -174,13 +160,18 @@ const ProfileEdit = () => {
       errors.bio = 'Bio must be at most 1000 characters';
     }
 
+    const trimmedUsername = String(username || '').trim().toLowerCase();
+    if (trimmedUsername && !/^[a-z0-9][a-z0-9_-]{2,29}$/.test(trimmedUsername)) {
+      errors.username = 'Username must be 3-30 characters: lowercase letters, numbers, "-" or "_"';
+    }
+
     const cleanedSkills = normalizeSkills(skills);
     if (skills.length !== cleanedSkills.length) {
       errors.skills = 'Skills contain duplicates/empty values';
     }
 
     return errors;
-  }, [bio, experienceLevel, name, skills]);
+  }, [bio, experienceLevel, name, skills, username]);
 
   const canSave = Object.keys(validationErrors).length === 0 && !saving && !loading;
 
@@ -265,7 +256,9 @@ const ProfileEdit = () => {
         targetRole: String(targetRole || '').trim(),
         skills: normalizeSkills(skills),
         bio: String(bio || ''),
-        avatar: String(avatar || '')
+        avatar: String(avatar || ''),
+        isProfilePublic: Boolean(isProfilePublic),
+        ...(String(username || '').trim() ? { username: String(username).trim().toLowerCase() } : {})
       };
 
       await clerkAPI.updateProfile(token, payload);
@@ -442,6 +435,37 @@ const ProfileEdit = () => {
                           {validationErrors.experienceLevel && (
                             <div className="text-xs text-red-300 mt-2">{validationErrors.experienceLevel}</div>
                           )}
+                        </div>
+
+                        <div>
+                          <label className="text-xs text-slate-400">Username (your public profile link)</label>
+                          <input
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                            className="mt-2 w-full px-4 py-2.5 rounded-2xl bg-white/5 border border-white/10 focus:outline-none focus:border-violet-500/50 focus:bg-white/10 transition-colors text-slate-100 placeholder:text-slate-500"
+                            placeholder="e.g. jane-dev"
+                            maxLength={30}
+                            disabled={loading || saving}
+                          />
+                          {validationErrors.username ? (
+                            <div className="text-xs text-red-300 mt-2">{validationErrors.username}</div>
+                          ) : username ? (
+                            <div className="text-xs text-slate-500 mt-2">/profile/{username}</div>
+                          ) : null}
+                        </div>
+
+                        <div>
+                          <label className="text-xs text-slate-400">Public profile</label>
+                          <label className="mt-2 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-white/5 border border-white/10 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isProfilePublic}
+                              onChange={(e) => setIsProfilePublic(e.target.checked)}
+                              disabled={loading || saving}
+                              className="accent-violet-500"
+                            />
+                            <span className="text-sm text-slate-200">Show my profile in search and at my public link</span>
+                          </label>
                         </div>
 
                         <div>

@@ -1,44 +1,33 @@
-const fs = require('fs');
-const path = require('path');
-
 const express = require('express');
 const multer = require('multer');
 const { param } = require('express-validator');
 
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
+const { AppError } = require('../utils/AppError');
+const { mockInterviewStartLimiter } = require('../middleware/rateLimiters');
 const { uploadResume, getResume, deleteResume } = require('../controllers/resumeController');
 
 const router = express.Router();
 
-const uploadDir = path.join(process.cwd(), 'uploads', 'resumes');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, `${Date.now()}_${safeName}`);
-  }
-});
+// Keep uploads in memory: the PDF is parsed immediately and never stored on
+// disk (local disk is wiped on every Render/Railway deploy).
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
   fileFilter: function (req, file, cb) {
     if (file.mimetype !== 'application/pdf') {
-      return cb(new Error('Only PDF files are allowed'));
+      return cb(new AppError('Only PDF files are allowed', 400));
     }
     return cb(null, true);
   }
 });
 
 // Apply auth per-route (same pattern as questionRoutes) to avoid conflicts with multer
-router.post('/upload', clerkAuthMiddleware(), upload.single('file'), uploadResume);
+// Each upload triggers an AI extraction, so it shares the interview-start limit
+router.post('/upload', clerkAuthMiddleware(), mockInterviewStartLimiter, upload.single('file'), uploadResume);
 router.get('/', clerkAuthMiddleware(), getResume);
 router.delete(
   '/:id',

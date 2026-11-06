@@ -80,7 +80,6 @@ const CodingChallenge = () => {
   const [language, setLanguage] = useState('javascript');
   const [code, setCode] = useState(DEFAULT_CODE.javascript);
   const [customInput, setCustomInput] = useState('');
-  const [showCustomInput, setShowCustomInput] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -221,8 +220,9 @@ const CodingChallenge = () => {
     autoSaveTimerRef.current = setTimeout(() => draftSave(newCode), 5000);
   };
 
-  // Run code against sample test cases (or custom input)
-  const handleRun = async () => {
+  // Run code against the sample test cases, or against the custom input when
+  // `custom` is true (the Custom Input tab's own button)
+  const handleRun = async ({ custom = false } = {}) => {
     if (running || submitting || !attempt) return;
     setRunning(true);
     setRunResults(null);
@@ -231,12 +231,8 @@ const CodingChallenge = () => {
       const token = await getToken();
       if (!token) return;
 
-      // Use codingAPI which calls /coding/problems/:id/run
-      // Pass customInput only when the user is on the Custom Input tab
       const payload = { language, code, attemptId: attempt.id };
-      if (showCustomInput && customInput.trim()) {
-        payload.customInput = customInput.trim();
-      }
+      if (custom && customInput.trim()) payload.customInput = customInput;
 
       const res = await codingAPI.runCode(token, id, payload);
       const run = res.data.run;
@@ -614,7 +610,7 @@ const CodingChallenge = () => {
                       <span className="hidden sm:inline">Save</span>
                     </button>
                     <button
-                      onClick={handleRun}
+                      onClick={() => handleRun()}
                       disabled={running || submitting || !attempt}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-xs text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50 transition font-medium"
                     >
@@ -854,7 +850,7 @@ const CodingChallenge = () => {
                           className="w-full h-32 rounded-lg bg-black/30 border border-white/10 text-sm text-white placeholder-slate-600 p-3 font-mono resize-none focus:outline-none focus:border-violet-500/50 transition"
                         />
                         <button
-                          onClick={() => { setShowCustomInput(true); handleRun(); }}
+                          onClick={() => handleRun({ custom: true })}
                           disabled={running || submitting || !attempt || !customInput.trim()}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-xs text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50 transition font-medium"
                         >

@@ -32,7 +32,29 @@ import AssessmentGate from '../components/assessment/AssessmentGate';
 import ViolationOverlay from '../components/assessment/ViolationOverlay';
 import ProctorBadge from '../components/assessment/ProctorBadge';
 import { useSecureAssessment, securityFromDoc } from '../hooks/useSecureAssessment';
+import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
+import { useSpeechToText } from '../hooks/useSpeechToText';
+import { useMediaDevices } from '../hooks/useMediaDevices';
+import DeviceCheck from '../components/assessment/DeviceCheck';
+import SelfView from '../components/assessment/SelfView';
+import {
+  VoiceModeToggle,
+  MicButton,
+  SpeechPlaybackControls,
+  MessageSpeakButton,
+  RecordingStatus
+} from '../components/interview/VoiceControls';
 import { clerkAPI, mockInterviewAPI } from '../services/api';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
+
+const VOICE_MODE_KEY = 'devprep.voice.mode';
+
+// Interviewer messages always come from the server and carry an _id
+const messageKey = (m, i) => m._id || `${i}-${m.timestamp || ''}`;
+
+function readVoiceMode() {
+  try { return localStorage.getItem(VOICE_MODE_KEY) === 'true'; } catch (_) { return false; }
+}
 
 const MockInterviewSession = () => {
   const { sessionId } = useParams();
@@ -77,25 +99,14 @@ const MockInterviewSession = () => {
     user?.username ||
     (dbProfile && dbProfile.name) || 'User';
 
-  const sidebarItems = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
-    { label: 'Profile', path: '/profile', Icon: UserIcon },
-    { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
-    { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-    { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
-    { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
-  ], []);
+  const sidebarItems = SIDEBAR_ITEMS;
 
-  const navbarLinks = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Questions', path: '/questions/generate' },
-    { label: 'Mock', path: '/interview/mock' },
-    { label: 'Resume', path: '/interview/resume' },
-    { label: 'Coding', path: '/coding/practice' }
-  ], []);
+  const navbarLinks = NAVBAR_LINKS;
 
   const avatarUrl = (dbProfile && dbProfile.avatar) || user?.imageUrl || '';
   const isActive = session?.status === 'active';
+  // Created but not begun: the device check runs, no question exists yet and the clock is stopped
+  const isReady = session?.status === 'ready';
   const isCompleted = session?.status === 'completed';
 
   // Fetch profile
@@ -144,13 +155,163 @@ const MockInterviewSession = () => {
   }, [getToken, sessionId]);
 
   const secure = useSecureAssessment({
-    enabled: isActive,
+    enabled: isActive || isReady,
     security: sessionSecurity,
     report: reportViolation,
     onTerminated: fetchSession
   });
 
   const endInterviewRef = useRef(null);
+
+  /* ── begin: the first question is generated only after Start is pressed ── */
+  const [beginning, setBeginning] = useState(false);
+  const [beginError, setBeginError] = useState('');
+  const beginInterview = useCallback(async () => {
+    setBeginning(true);
+    setBeginError('');
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await mockInterviewAPI.begin(token, sessionId);
+      setSession(res.data?.session || null);
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Failed to start the interview';
+      if (err?.response?.data?.session) setSession(err.response.data.session);
+      setBeginError(msg);
+      toast.error(msg);
+    } finally {
+      setBeginning(false);
+    }
+  }, [getToken, sessionId]);
+
+  /* ── voice mode ── */
+  const speechLang = useMemo(() => {
+    const l = (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    return /^en\b/i.test(l) ? l : 'en-US';
+  }, []);
+  const [voiceMode, setVoiceModeState] = useState(readVoiceMode);
+  const tts = useSpeechSynthesis({ lang: speechLang });
+  const { speak, stop: stopSpeaking, muted: ttsMuted } = tts;
+
+  const appendTranscript = useCallback((text) => {
+    setMessageInput((prev) => {
+      const head = prev.replace(/\s+$/, '');
+      return head ? `${head} ${text}` : text;
+    });
+  }, []);
+
+  const transcribeRecording = useCallback(async (blob) => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    const form = new FormData();
+    form.append('audio', blob, `answer.${ext}`);
+    form.append('language', speechLang.slice(0, 2));
+    const res = await mockInterviewAPI.transcribe(token, sessionId, form);
+    return res.data?.text || '';
+  }, [getToken, sessionId, speechLang]);
+
+  /* ── devices: opened in the pre-interview check, kept for the whole interview ── */
+  const devices = useMediaDevices();
+  const [devicesReady, setDevicesReady] = useState(false);
+  const devicesStreamRef = useRef(null);
+  devicesStreamRef.current = devices.stream;
+  const getDeviceStream = useCallback(() => devicesStreamRef.current, []);
+  const { release: releaseDevices } = devices;
+
+  const stt = useSpeechToText({
+    lang: speechLang,
+    onFinal: appendTranscript,
+    transcribe: transcribeRecording,
+    getStream: getDeviceStream,
+    // Once proctoring runs, never open a new permission prompt from the mic button
+    allowPrompt: !secure.running
+  });
+  const { start: startRecognition, stop: stopListening, listening, processing: transcribing } = stt;
+
+  const latestQuestion = useMemo(() => {
+    const msgs = session?.messages || [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === 'interviewer') {
+        return { key: messageKey(msgs[i], i), content: msgs[i].content, isLast: i === msgs.length - 1 };
+      }
+    }
+    return null;
+  }, [session?.messages]);
+
+  const setVoiceMode = (on) => {
+    setVoiceModeState(on);
+    try { localStorage.setItem(VOICE_MODE_KEY, String(on)); } catch (_) { /* ignore */ }
+    if (!on) {
+      stopListening();
+      stopSpeaking();
+      return;
+    }
+    // Read out the question that is waiting for an answer
+    if (isActive && latestQuestion?.isLast && !ttsMuted) {
+      speak(latestQuestion.content, latestQuestion.key);
+    }
+  };
+
+  const startListening = () => {
+    stopSpeaking(); // never record the interviewer's own voice
+    startRecognition();
+  };
+
+  const playLatestQuestion = () => {
+    if (!latestQuestion) return;
+    if (ttsMuted) tts.setMuted(false);
+    speak(latestQuestion.content, latestQuestion.key);
+  };
+
+  // Speak each new interviewer message once, in voice mode. Messages that were
+  // already on screen when the page loaded are not replayed, except the
+  // question still waiting for an answer.
+  const spokenRef = useRef(null);
+  useEffect(() => {
+    const msgs = session?.messages;
+    if (!msgs) return;
+    const keys = [];
+    msgs.forEach((m, i) => { if (m.role === 'interviewer') keys.push(messageKey(m, i)); });
+
+    if (spokenRef.current === null) {
+      const last = msgs[msgs.length - 1];
+      const pending = last && last.role === 'interviewer' ? messageKey(last, msgs.length - 1) : null;
+      spokenRef.current = new Set(keys.filter((k) => k !== pending));
+    }
+
+    const unspoken = keys.filter((k) => !spokenRef.current.has(k));
+    if (unspoken.length === 0) return;
+    // Wait until the proctoring gate is passed: its click also lets the browser play audio
+    if (voiceMode && isActive && secure.needsGate) return;
+
+    unspoken.forEach((k) => spokenRef.current.add(k));
+    if (!voiceMode || ttsMuted || !isActive || listening) return;
+    const newestKey = unspoken[unspoken.length - 1];
+    const idx = msgs.findIndex((m, i) => messageKey(m, i) === newestKey);
+    if (idx >= 0) speak(msgs[idx].content, newestKey);
+  }, [session?.messages, voiceMode, ttsMuted, isActive, secure.needsGate, listening, speak]);
+
+  // Stop the microphone and turn the camera off when the interview ends
+  // (a session that hasn't begun yet keeps them: the device check is using them)
+  const hasEnded = Boolean(session) && !isActive && !isReady;
+  useEffect(() => {
+    if (hasEnded) {
+      stopListening();
+      releaseDevices();
+    }
+  }, [hasEnded, stopListening, releaseDevices]);
+
+  const deviceProblem = secure.running && [devices.camera, devices.microphone]
+    .find((d) => ['disconnected', 'denied', 'unavailable', 'in_use', 'error'].includes(d.status));
+
+  // Keep the answer box sized to its text (also after a transcript is added)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }, [messageInput]);
 
   // Timer
   useEffect(() => {
@@ -199,6 +360,9 @@ const MockInterviewSession = () => {
 
   const handleSendMessage = async () => {
     if (sending || !messageInput.trim() || !isActive) return;
+    // Wait for the transcript to finish so no late words are lost
+    if (listening || transcribing) return;
+    stopSpeaking();
     setSending(true);
     const content = messageInput.trim();
     setMessageInput('');
@@ -241,8 +405,15 @@ const MockInterviewSession = () => {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
       const res = await mockInterviewAPI.endSession(token, sessionId, status);
-      setSession(res.data?.session || null);
-      toast.success('Interview ended — evaluation ready!');
+      const ended = res.data?.session || null;
+      setSession(ended);
+      if (ended?.evaluationStatus === 'failed') {
+        toast.error('Interview ended, but the evaluation could not be generated. You can retry it below.');
+      } else if (status === 'completed') {
+        toast.success('Interview ended — evaluation ready!');
+      } else {
+        toast.success('Interview ended');
+      }
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Failed to end interview';
       toast.error(msg);
@@ -251,6 +422,24 @@ const MockInterviewSession = () => {
     }
   };
   endInterviewRef.current = handleEndInterview;
+
+  const [retryingEvaluation, setRetryingEvaluation] = useState(false);
+  const handleRetryEvaluation = async () => {
+    if (retryingEvaluation) return;
+    setRetryingEvaluation(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await mockInterviewAPI.retryEvaluation(token, sessionId);
+      setSession(res.data?.session || null);
+      toast.success('Evaluation ready!');
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message || 'Evaluation failed';
+      toast.error(msg);
+    } finally {
+      setRetryingEvaluation(false);
+    }
+  };
 
   // Auto-complete interview when final message is received
   useEffect(() => {
@@ -369,6 +558,8 @@ const MockInterviewSession = () => {
                     <div className="flex items-center gap-2">
                       {isActive && (
                         <>
+                          <VoiceModeToggle voiceMode={voiceMode} onChange={setVoiceMode} disabled={ending} />
+
                           <ProctorBadge security={secure.security} />
 
                           {/* Timer */}
@@ -402,7 +593,7 @@ const MockInterviewSession = () => {
                         </>
                       )}
 
-                      {!isActive && (
+                      {hasEnded && (
                         <div className={`px-3 h-9 rounded-xl border inline-flex items-center text-sm font-semibold capitalize ${
                           isCompleted
                             ? 'bg-emerald-600/15 border-emerald-400/30 text-emerald-300'
@@ -415,6 +606,20 @@ const MockInterviewSession = () => {
                       )}
                     </div>
                   </div>
+
+                  {deviceProblem && (
+                    <div className="mt-3 rounded-2xl border border-rose-400/30 bg-rose-600/10 p-3 flex flex-wrap items-center gap-3">
+                      <span className="flex-1 text-sm text-rose-100">{deviceProblem.message || 'A device stopped working.'}</span>
+                      <button
+                        type="button"
+                        onClick={devices.request}
+                        disabled={devices.requesting}
+                        className="h-9 px-4 rounded-xl bg-white/10 border border-white/15 hover:bg-white/15 text-sm text-slate-100 disabled:opacity-50"
+                      >
+                        {devices.requesting ? 'Reconnecting…' : 'Reconnect devices'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Chat area */}
                   <div className="mt-3 flex-1 rounded-2xl border border-white/10 bg-[#1e1e2d]/40 backdrop-blur-xl flex flex-col" style={{ minHeight: '400px', maxHeight: 'calc(100vh - 320px)' }}>
@@ -437,6 +642,13 @@ const MockInterviewSession = () => {
                               <div className="flex items-center gap-1.5 mb-1.5">
                                 <Bot className="w-3.5 h-3.5 text-cyan-400" />
                                 <span className="text-xs font-semibold text-cyan-400">Interviewer</span>
+                                {tts.supported && (
+                                  <MessageSpeakButton
+                                    active={tts.currentId === messageKey(msg, i) && tts.status !== 'idle'}
+                                    onPlay={() => speak(msg.content, messageKey(msg, i))}
+                                    onStop={stopSpeaking}
+                                  />
+                                )}
                               </div>
                             )}
                             <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
@@ -448,6 +660,49 @@ const MockInterviewSession = () => {
                       ))}
 
                       {/* Typing indicator */}
+                      {isReady && (
+                        <div className="min-h-[320px] h-full flex items-center justify-center text-center p-6">
+                          {beginning ? (
+                            <div>
+                              <div className="w-10 h-10 rounded-full border-2 border-violet-400 border-t-transparent animate-spin mx-auto" />
+                              <p className="text-sm text-slate-200 mt-3">Starting your interview…</p>
+                              <p className="text-xs text-slate-400 mt-1">The interviewer is preparing the first question. The timer starts when it appears.</p>
+                            </div>
+                          ) : (
+                            <div className="max-w-md">
+                              <PlayCircle className="w-10 h-10 text-violet-400 mx-auto" />
+                              <p className="text-base font-semibold text-slate-100 mt-3">Your interview is ready</p>
+                              <p className={`text-sm mt-1 ${beginError ? 'text-rose-300' : 'text-slate-400'}`}>
+                                {beginError || (secure.needsGate
+                                  ? 'Finish the device check to begin.'
+                                  : 'The first question appears and the timer starts when you press Start interview.')}
+                              </p>
+                              {!secure.needsGate && (
+                                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={beginInterview}
+                                    className="h-10 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white text-sm font-semibold"
+                                  >
+                                    {beginError ? 'Try again' : 'Start interview'}
+                                  </button>
+                                  {secure.running && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEndInterview('abandoned')}
+                                      disabled={ending}
+                                      className="h-10 px-5 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 text-sm text-slate-200 disabled:opacity-50"
+                                    >
+                                      Cancel interview
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {sending && (
                         <motion.div
                           initial={{ opacity: 0 }}
@@ -474,7 +729,35 @@ const MockInterviewSession = () => {
                     {/* Input area */}
                     {isActive && (
                       <div className="border-t border-white/10 p-3">
+                        {voiceMode && (
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            {tts.supported ? (
+                              <SpeechPlaybackControls
+                                tts={tts}
+                                onPlayLatest={playLatestQuestion}
+                                hasQuestion={Boolean(latestQuestion)}
+                              />
+                            ) : (
+                              <span className="text-xs text-slate-500">This browser can't read questions aloud.</span>
+                            )}
+                            {stt.supported && (
+                              <span className="text-xs text-slate-500">
+                                {stt.livePreview ? 'Live preview while you speak' : 'Transcribed when you stop recording'}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <div className="flex items-end gap-2">
+                          {voiceMode && (
+                            <MicButton
+                              listening={listening}
+                              processing={transcribing}
+                              level={stt.level}
+                              disabled={sending || !stt.supported}
+                              onStart={startListening}
+                              onStop={stopListening}
+                            />
+                          )}
                           <textarea
                             ref={inputRef}
                             rows={1}
@@ -486,7 +769,9 @@ const MockInterviewSession = () => {
                               e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
                             }}
                             onKeyDown={handleKeyDown}
-                            placeholder="Type your answer…"
+                            placeholder={voiceMode
+                              ? 'Tap the mic and speak. Your answer appears here to review and edit before sending…'
+                              : 'Type your answer…'}
                             disabled={sending}
                             className="flex-1 bg-black/20 border border-white/10 focus:border-violet-400/30 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-50 transition-colors"
                             style={{ minHeight: '44px', maxHeight: '120px' }}
@@ -494,23 +779,65 @@ const MockInterviewSession = () => {
                           <button
                             type="button"
                             onClick={handleSendMessage}
-                            disabled={sending || !messageInput.trim()}
+                            disabled={sending || !messageInput.trim() || listening || transcribing}
+                            title={listening ? 'Stop recording first, then review and send' : 'Send answer'}
                             className="h-11 w-11 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-[0_0_20px_rgba(139,92,246,0.2)] hover:shadow-[0_0_30px_rgba(139,92,246,0.35)] flex-shrink-0"
                           >
                             <Send className="w-4 h-4 text-white" />
                           </button>
                         </div>
+                        {voiceMode && (
+                          <div className="mt-2 min-h-[1.25rem] text-xs" aria-live="polite">
+                            {stt.error ? (
+                              <div className="flex items-start gap-2 text-rose-300">
+                                <span className="flex-1">{stt.error}</span>
+                                <button type="button" onClick={stt.clearError} className="text-slate-400 hover:text-slate-200 underline">
+                                  Dismiss
+                                </button>
+                              </div>
+                            ) : listening ? (
+                              <RecordingStatus stt={stt} />
+                            ) : transcribing ? (
+                              <span className="text-violet-300 inline-flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full border-2 border-violet-300 border-t-transparent animate-spin" />
+                                Transcribing your answer… it will appear in the box above for you to review.
+                              </span>
+                            ) : stt.notice ? (
+                              <span className="text-amber-300">{stt.notice}</span>
+                            ) : tts.error === 'blocked' ? (
+                              <span className="text-amber-300">Your browser blocked automatic audio. Press play to hear the question.</span>
+                            ) : !stt.supported ? (
+                              <span className="text-slate-500">Voice input isn't available in this browser. You can still listen to the questions and type your answers.</span>
+                            ) : (
+                              <span className="text-slate-500">Tap the mic, speak your answer, then review the text and press Send.</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
 
                     {/* Read-only notice for completed sessions */}
-                    {!isActive && !evaluation && (
+                    {hasEnded && !evaluation && (
                       <div className="border-t border-white/10 p-3">
                         <div className={`text-center text-xs py-2 ${isTerminated ? 'text-rose-300' : 'text-slate-500'}`}>
                           {isTerminated
                             ? `This interview was terminated after ${session.violationCount} assessment violations. No evaluation was generated. The transcript is read-only.`
-                            : 'This interview session has ended. The transcript is read-only.'}
+                            : session.evaluationStatus === 'failed'
+                              ? 'The AI evaluation could not be generated for this interview.'
+                              : 'This interview session has ended. The transcript is read-only.'}
                         </div>
+                        {!isTerminated && session.status === 'completed' && session.evaluationStatus === 'failed' && (
+                          <div className="flex justify-center pb-2">
+                            <button
+                              type="button"
+                              onClick={handleRetryEvaluation}
+                              disabled={retryingEvaluation}
+                              className="h-9 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white text-sm font-semibold disabled:opacity-50"
+                            >
+                              {retryingEvaluation ? 'Generating evaluation…' : 'Retry evaluation'}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -697,15 +1024,31 @@ const MockInterviewSession = () => {
         </div>
       </div>
 
+      {/* Camera self-view while the proctored interview runs */}
+      {secure.running && devices.stream && devices.camera.status === 'granted' && (
+        <SelfView stream={devices.stream} />
+      )}
+
       <AssessmentGate
         open={!loading && !error && secure.needsGate}
+        startDisabled={!devicesReady}
+        startHint="Finish the device check to start."
         title="Proctored Interview"
         subtitle={session ? `${session.interviewType} interview • ${session.role} • ${session.duration} min` : ''}
         security={secure.security}
-        onStart={secure.arm}
+        startLabel="Start Interview"
+        starting={beginning}
+        onStart={async () => {
+          // Fullscreen must be requested inside the click, so arm first; the
+          // interview itself (first question, timer, voice) begins only now.
+          await secure.arm();
+          await beginInterview();
+        }}
         onCancel={() => navigate('/interview/mock')}
         cancelLabel="Back to Setup"
-      />
+      >
+        <DeviceCheck devices={devices} onReadyChange={setDevicesReady} />
+      </AssessmentGate>
 
       <ViolationOverlay
         secure={secure}

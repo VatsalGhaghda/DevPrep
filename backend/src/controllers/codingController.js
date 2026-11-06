@@ -1,21 +1,38 @@
 const CodingProblem = require('../models/CodingProblem');
+const { escapeRegex } = require('../utils/escapeRegex');
 const CodingAttempt = require('../models/CodingAttempt');
 const Submission = require('../models/Submission');
-const User = require('../models/User');
+const { resolveUser } = require('../utils/resolveUser');
 const { runAgainstTestCases, executeCode } = require('../utils/judgeService');
 const { buildSecurityPolicy, recordViolation, securitySummary } = require('../utils/assessmentSecurity');
 
 /* ───────── helpers ───────── */
 
-async function resolveUser(req) {
-  // Clerk auth: req.auth.userId is the Clerk user ID
-  if (req.auth && req.auth.userId) {
-    const user = await User.findOne({ clerkUserId: req.auth.userId });
-    return user;
-  }
-  // JWT auth fallback
-  if (req.user) return req.user;
-  return null;
+
+/**
+ * Bump a problem's submission counters and recompute its acceptance rate in a
+ * single atomic update, so concurrent submissions can't leave it wrong.
+ */
+async function recordProblemSubmission(problemId, accepted) {
+  await CodingProblem.updateOne(
+    { _id: problemId },
+    [
+      {
+        $set: {
+          totalSubmissions: { $add: [{ $ifNull: ['$totalSubmissions', 0] }, 1] },
+          totalAccepted: { $add: [{ $ifNull: ['$totalAccepted', 0] }, accepted ? 1 : 0] }
+        }
+      },
+      {
+        $set: {
+          acceptanceRate: {
+            $round: [{ $multiply: [{ $divide: ['$totalAccepted', '$totalSubmissions'] }, 100] }, 0]
+          }
+        }
+      }
+    ],
+    { updatePipeline: true }
+  );
 }
 
 function attemptView(attempt) {
@@ -72,13 +89,13 @@ async function listProblems(req, res, next) {
 
     const filter = {};
     if (difficulty) filter.difficulty = String(difficulty);
-    if (category) filter.category = { $regex: `^${String(category)}$`, $options: 'i' };
+    if (category) filter.category = { $regex: `^${escapeRegex(category)}$`, $options: 'i' };
     if (tags) {
       const tagList = String(tags).split(',').map((t) => t.trim()).filter(Boolean);
       if (tagList.length) filter.tags = { $in: tagList };
     }
     if (q) {
-      const escaped = String(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = escapeRegex(q);
       filter.$or = [
         { title: { $regex: escaped, $options: 'i' } },
         { tags: { $regex: escaped, $options: 'i' } },
@@ -316,16 +333,7 @@ async function submitSolution(req, res, next) {
     // Run against ALL test cases (including hidden)
     const allTests = problem.testCases || [];
     if (!allTests.length) {
-      return res.status(200).json({
-        message: 'No test cases available to judge',
-        result: {
-          problemId: problem._id,
-          language,
-          status: 'accepted',
-          passedTests: 0,
-          totalTests: 0
-        }
-      });
+      return res.status(422).json({ message: 'This problem has no test cases yet, so it cannot be judged.' });
     }
 
     const { results, passedCount, totalCount, overallStatus } =
@@ -363,22 +371,7 @@ async function submitSolution(req, res, next) {
       isDraft: false
     });
 
-    // Update problem stats atomically in one operation.
-    // We already know: totalSubmissions (pre-update) and overallStatus.
-    // Compute the new counts locally to derive acceptanceRate without a second DB round-trip.
-    const prevTotal = problem.totalSubmissions || 0;
-    const prevAccepted = problem.totalAccepted || 0;
-    const newTotal = prevTotal + 1;
-    const newAccepted = prevAccepted + (overallStatus === 'accepted' ? 1 : 0);
-    const newAcceptanceRate = newTotal > 0 ? Math.round((newAccepted / newTotal) * 100) : 0;
-
-    await CodingProblem.findByIdAndUpdate(problem._id, {
-      $inc: {
-        totalSubmissions: 1,
-        totalAccepted: overallStatus === 'accepted' ? 1 : 0
-      },
-      acceptanceRate: newAcceptanceRate
-    });
+    await recordProblemSubmission(problem._id, overallStatus === 'accepted');
 
     // Return result — do NOT expose hidden test case inputs/expected outputs
     const safeResults = results.map((r, i) => {
@@ -580,5 +573,6 @@ module.exports = {
   startAttempt,
   logAttemptViolation,
   requireActiveAttempt,
-  attemptView
+  attemptView,
+  recordProblemSubmission
 };

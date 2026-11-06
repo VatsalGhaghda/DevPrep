@@ -31,6 +31,7 @@ import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
 import { clerkAPI, resumeAPI, mockInterviewAPI } from '../services/api';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
 
 /* ── constants ──────────────────────────────────────────────────────────── */
 
@@ -90,22 +91,9 @@ const ResumeInterview = () => {
 
   const displayName = user?.fullName || [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username || (dbProfile && dbProfile.name) || 'User';
 
-  const sidebarItems = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
-    { label: 'Profile', path: '/profile', Icon: User },
-    { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
-    { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-    { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
-    { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
-  ], []);
+  const sidebarItems = SIDEBAR_ITEMS;
 
-  const navbarLinks = useMemo(() => [
-    { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Questions', path: '/questions/generate' },
-    { label: 'Mock', path: '/interview/mock' },
-    { label: 'Resume', path: '/interview/resume' },
-    { label: 'Coding', path: '/coding/practice' }
-  ], []);
+  const navbarLinks = NAVBAR_LINKS;
 
   const avatarUrl = (dbProfile && dbProfile.avatar) || user?.imageUrl || '';
 

@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema(
   {
@@ -35,35 +34,9 @@ const userSchema = new mongoose.Schema(
       maxlength: 254,
       match: [/^\S+@\S+\.\S+$/, 'Invalid email address']
     },
-    googleId: {
-      type: String,
-      default: '',
-      index: true
-    },
-    password: {
-      type: String,
-      default: '',
-      select: false
-    },
-    resetPasswordToken: {
-      type: String,
-      default: ''
-    },
-    resetPasswordExpires: {
-      type: Date,
-      default: null
-    },
     isEmailVerified: {
       type: Boolean,
       default: false
-    },
-    emailVerificationToken: {
-      type: String,
-      default: ''
-    },
-    emailVerificationExpires: {
-      type: Date,
-      default: null
     },
     role: {
       type: String,
@@ -94,28 +67,18 @@ const userSchema = new mongoose.Schema(
     avatar: {
       type: String,
       trim: true,
+      // data: URLs from the avatar upload (1 MB image ≈ 1.4 MB base64)
+      maxlength: 1500000,
       default: ''
+    },
+    // Show this user in search and on /profile/:username
+    isProfilePublic: {
+      type: Boolean,
+      default: true
     }
   },
   { timestamps: true }
 );
-
-userSchema.pre('save', async function () {
-  if (!this.isModified('password')) {
-    return;
-  }
-
-  if (!this.password) {
-    return;
-  }
-
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-});
-
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return bcrypt.compare(enteredPassword, this.password);
-};
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 

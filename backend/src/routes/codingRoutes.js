@@ -4,6 +4,9 @@ const { body, param, query } = require('express-validator');
 const { clerkAuthMiddleware } = require('../middleware/clerkAuth');
 const { validateRequest } = require('../middleware/validateRequest');
 const { VIOLATION_TYPES } = require('../utils/assessmentSecurity');
+const { executionLimiter } = require('../middleware/executionLimiter');
+const { codeExecutionLimiter } = require('../middleware/rateLimiters');
+const { SUPPORTED_LANGUAGES } = require('../utils/judgeService');
 const {
   listProblems,
   getProblem,
@@ -16,6 +19,15 @@ const {
 } = require('../controllers/codingController');
 
 const router = express.Router();
+
+const MAX_CODE_LENGTH = 64 * 1024; // characters
+const MAX_INPUT_LENGTH = 256 * 1024;
+
+const codeRules = [
+  body('language').optional().isIn(SUPPORTED_LANGUAGES).withMessage('Unsupported language'),
+  body('code').trim().notEmpty().withMessage('Code is required')
+    .isLength({ max: MAX_CODE_LENGTH }).withMessage(`Code must be at most ${MAX_CODE_LENGTH} characters`)
+];
 
 const clerkAuth = clerkAuthMiddleware();
 
@@ -48,11 +60,12 @@ router.post(
   clerkAuth,
   [
     param('id').isMongoId().withMessage('Invalid id'),
-    body('language').optional().isString().withMessage('Language must be a string'),
-    body('code').trim().notEmpty().withMessage('Code is required'),
+    ...codeRules,
     body('attemptId').isMongoId().withMessage('A valid attemptId is required')
   ],
   validateRequest,
+  codeExecutionLimiter,
+  executionLimiter,
   submitSolution
 );
 
@@ -61,12 +74,13 @@ router.post(
   clerkAuth,
   [
     param('id').isMongoId().withMessage('Invalid id'),
-    body('language').optional().isString().withMessage('Language must be a string'),
-    body('code').trim().notEmpty().withMessage('Code is required'),
-    body('customInput').optional().isString().withMessage('Input must be a string'),
+    ...codeRules,
+    body('customInput').optional().isString().isLength({ max: MAX_INPUT_LENGTH }).withMessage('Input is too large'),
     body('attemptId').isMongoId().withMessage('A valid attemptId is required')
   ],
   validateRequest,
+  codeExecutionLimiter,
+  executionLimiter,
   runCode
 );
 
@@ -95,8 +109,7 @@ router.post(
   clerkAuth,
   [
     param('id').isMongoId().withMessage('Invalid id'),
-    body('language').optional().isString().withMessage('Language must be a string'),
-    body('code').trim().notEmpty().withMessage('Code is required')
+    ...codeRules
   ],
   validateRequest,
   saveDraft
@@ -111,3 +124,5 @@ router.get(
 );
 
 module.exports = router;
+module.exports.MAX_CODE_LENGTH = MAX_CODE_LENGTH;
+module.exports.MAX_INPUT_LENGTH = MAX_INPUT_LENGTH;

@@ -1,39 +1,12 @@
-const { clerkClient } = require('@clerk/clerk-sdk-node');
-
 const User = require('../models/User');
-const {
-  upsertUserFromClerkApi,
-  getClerkUserIdFromAuth
-} = require('./clerkSyncController');
+const { resolveUser } = require('../utils/resolveUser');
+const { publicUserView, USERNAME_RE } = require('./clerkSyncController');
 
 async function getProfile(req, res, next) {
   try {
-    const clerkUserId = getClerkUserIdFromAuth(req);
-    if (!clerkUserId) {
-      return res.status(401).json({ message: 'Not authorized' });
-    }
-
-    let user = await User.findOne({ clerkUserId });
-    if (!user) {
-      const clerkUser = await clerkClient.users.getUser(clerkUserId);
-      user = await upsertUserFromClerkApi(clerkUser);
-    }
-
-    return res.status(200).json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        skills: user.skills,
-        targetRole: user.targetRole,
-        experienceLevel: user.experienceLevel,
-        bio: user.bio,
-        avatar: user.avatar,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
-    });
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ message: 'Not authorized' });
+    return res.status(200).json({ user: publicUserView(user) });
   } catch (err) {
     return next(err);
   }
@@ -41,41 +14,33 @@ async function getProfile(req, res, next) {
 
 async function updateProfile(req, res, next) {
   try {
-    const clerkUserId = getClerkUserIdFromAuth(req);
-    if (!clerkUserId) {
-      return res.status(401).json({ message: 'Not authorized' });
-    }
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ message: 'Not authorized' });
 
-    let user = await User.findOne({ clerkUserId });
-    if (!user) {
-      const clerkUser = await clerkClient.users.getUser(clerkUserId);
-      user = await upsertUserFromClerkApi(clerkUser);
-    }
-
-    const allowed = ['name', 'skills', 'targetRole', 'experienceLevel', 'bio', 'avatar'];
+    const allowed = ['name', 'skills', 'targetRole', 'experienceLevel', 'bio', 'avatar', 'isProfilePublic'];
     for (const key of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body, key)) {
         user[key] = req.body[key];
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, 'username')) {
+      const username = String(req.body.username || '').trim().toLowerCase();
+      if (!USERNAME_RE.test(username)) {
+        return res.status(400).json({
+          message: 'Username must be 3-30 characters: lowercase letters, numbers, "-" or "_", starting with a letter or number'
+        });
+      }
+      if (username !== user.username) {
+        const taken = await User.exists({ username, _id: { $ne: user._id } });
+        if (taken) return res.status(409).json({ message: 'That username is already taken' });
+        user.username = username;
+      }
+    }
+
     await user.save();
 
-    return res.status(200).json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        skills: user.skills,
-        targetRole: user.targetRole,
-        experienceLevel: user.experienceLevel,
-        bio: user.bio,
-        avatar: user.avatar,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
-    });
+    return res.status(200).json({ user: publicUserView(user) });
   } catch (err) {
     return next(err);
   }

@@ -5,10 +5,8 @@ import { ClerkProvider } from '@clerk/clerk-react';
 import Auth from './pages/Auth';
 import SSOCallback from './pages/SSOCallback';
 import Dashboard from './pages/Dashboard';
-import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import OAuthSuccess from './pages/OAuthSuccess';
 import Profile from './pages/Profile';
 import ProfileEdit from './pages/ProfileEdit';
 import PublicProfile from './pages/PublicProfile';
@@ -18,6 +16,7 @@ import MockInterviewSession from './pages/MockInterviewSession';
 import ResumeInterview from './pages/ResumeInterview';
 import CodingPractice from './pages/CodingPractice';
 import CodingChallenge from './pages/CodingChallenge';
+import DevAnalytics from './pages/DevAnalytics';
 import NotFound from './pages/NotFound';
 
 import ToastProvider from './components/ui/ToastProvider';
@@ -40,10 +39,8 @@ function App() {
               <Route path="/register"        element={<Auth />} />
               <Route path="/sso"             element={<SSOCallback />} />
               <Route path="/sso-callback"    element={<SSOCallback />} />
-              <Route path="/verify-email"    element={<VerifyEmail />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password"  element={<ResetPassword />} />
-              <Route path="/oauth-success"   element={<OAuthSuccess />} />
 
               {/* ── Public user profile ── */}
               <Route path="/profile/:username" element={<PublicProfile />} />
@@ -61,6 +58,8 @@ function App() {
 
               <Route path="/coding/practice"        element={<ProtectedRoute><CodingPractice /></ProtectedRoute>} />
               <Route path="/coding/challenge/:id"   element={<ProtectedRoute><CodingChallenge /></ProtectedRoute>} />
+
+              <Route path="/analytics"              element={<ProtectedRoute><DevAnalytics /></ProtectedRoute>} />
 
               {/* ── 404 catch-all ── */}
               <Route path="*" element={<NotFound />} />

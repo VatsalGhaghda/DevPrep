@@ -24,9 +24,11 @@ router.post(
   clerkAuthMiddleware(),
   questionGenerationLimiter,
   [
-    body('role').optional().isString().withMessage('Role must be a string'),
-    body('difficulty').optional().isString().withMessage('Difficulty must be a string'),
-    body('topics').optional().isArray().withMessage('Topics must be an array'),
+    body('role').optional().isString().isLength({ max: 100 }).withMessage('Role must be a string (max 100 chars)'),
+    body('difficulty').optional().isString().isLength({ max: 20 }).withMessage('Difficulty must be a short string'),
+    body('topics').optional().isArray({ max: 10 }).withMessage('Topics must be an array (max 10)'),
+    body('topics.*').optional().isString().isLength({ max: 50 }).withMessage('Each topic must be at most 50 chars'),
+    body('excludeQuestions.*').optional().isString().isLength({ max: 1000 }).withMessage('Excluded questions must be strings'),
     body('count').optional().isInt({ min: 1, max: 20 }).withMessage('Count must be 1-20'),
     body('excludeQuestions').optional().isArray().withMessage('excludeQuestions must be an array')
   ],

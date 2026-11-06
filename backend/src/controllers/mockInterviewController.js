@@ -1,9 +1,6 @@
-const { clerkClient } = require('@clerk/clerk-sdk-node');
-
 const MockInterviewSession = require('../models/MockInterviewSession');
 const Resume = require('../models/Resume');
-const User = require('../models/User');
-const { upsertUserFromClerkApi, getClerkUserIdFromAuth } = require('./clerkSyncController');
+const { resolveUser } = require('../utils/resolveUser');
 const { groqChat } = require('../utils/aiService');
 const { buildSecurityPolicy, recordViolation, securitySummary } = require('../utils/assessmentSecurity');
 
@@ -22,21 +19,84 @@ const CHAT_HISTORY_WINDOW = 20;
 // growing beyond the 16 MB document limit.
 const MAX_SESSION_MESSAGES = 100;
 
+// Messages are accepted for this long after the session's duration runs out,
+// to cover network delay on the last answer.
+const DURATION_GRACE_MS = 2 * 60 * 1000;
+
+// A reply lock older than this is treated as stale (e.g. the server restarted
+// mid-request) and ignored.
+const REPLY_LOCK_STALE_MS = 2 * 60 * 1000;
+
+/** Strip control characters / newlines and cap length before putting user text into a prompt. */
+function promptSafe(value, maxLen = 100) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f`]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function sessionDeadline(session) {
+  const startedAt = new Date(session.startedAt || session.createdAt).getTime();
+  return startedAt + (session.duration || 30) * 60 * 1000;
+}
+
+function parseEvaluation(evalRaw) {
+  let cleaned = String(evalRaw || '').trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  }
+  const evalData = JSON.parse(cleaned);
+  const score = Number(evalData.overallScore);
+  if (!Number.isFinite(score)) throw new Error('Evaluation has no overallScore');
+  const strList = (v) => (Array.isArray(v) ? v.map((x) => String(x)).slice(0, 20) : []);
+
+  return {
+    overallScore: Math.min(100, Math.max(0, Math.round(score))),
+    strengths: strList(evalData.strengths),
+    weaknesses: strList(evalData.weaknesses),
+    topicFeedback: Array.isArray(evalData.topicFeedback)
+      ? evalData.topicFeedback.slice(0, 20).map((t) => ({
+          topic: String((t && t.topic) || ''),
+          score: Math.min(100, Math.max(0, Number(t && t.score) || 0)),
+          comments: String((t && t.comments) || '')
+        }))
+      : [],
+    communicationFeedback: String(evalData.communicationFeedback || ''),
+    technicalDepthFeedback: String(evalData.technicalDepthFeedback || ''),
+    improvementTips: strList(evalData.improvementTips),
+    recommendedNextSteps: strList(evalData.recommendedNextSteps),
+    summary: String(evalData.summary || '')
+  };
+}
+
+/**
+ * Ask the AI to grade the transcript. On failure the session is left without
+ * an evaluation (evaluationStatus = 'failed') rather than given a made-up
+ * score, so analytics only ever average real evaluations.
+ */
+async function evaluateSession(session) {
+  try {
+    const evalRaw = await groqChat(
+      [
+        { role: 'system', content: 'You are an interview evaluation expert. Respond only with valid JSON.' },
+        { role: 'user', content: buildEvaluationPrompt(session) },
+      ],
+      { temperature: 0.3, maxTokens: 4096 }
+    );
+    session.evaluation = parseEvaluation(evalRaw);
+    session.evaluationStatus = 'success';
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[mock-interview] evaluation failed:', err.message);
+    session.evaluation = null;
+    session.evaluationStatus = 'failed';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function resolveUser(req) {
-  const clerkUserId = getClerkUserIdFromAuth(req);
-  if (!clerkUserId) return null;
-
-  let user = await User.findOne({ clerkUserId });
-  if (!user) {
-    const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    user = await upsertUserFromClerkApi(clerkUser);
-  }
-  return user;
-}
 
 // ---------------------------------------------------------------------------
 // AI Prompts
@@ -50,13 +110,13 @@ function buildSystemPrompt(session) {
     : 'Mixed (Technical + HR)';
 
   const topicsStr = session.selectedTopics.length
-    ? session.selectedTopics.join(', ')
+    ? session.selectedTopics.map((t) => promptSafe(t, 50)).join(', ')
     : 'general topics relevant to the role';
 
   const base = `You are a professional mock interviewer conducting a real ${typeLabel} interview simulation.
 
 Candidate details:
-- Target role: ${session.role || 'Software Developer'}
+- Target role: ${promptSafe(session.role) || 'Software Developer'}
 - Difficulty level: ${session.difficulty || 'medium'}
 - Interview topics: ${topicsStr}
 - Interview duration: ${session.duration} minutes
@@ -131,9 +191,9 @@ IMPORTANT: Now that the interview has ended, you MUST provide the correct answer
 
 Interview details:
 - Type: ${session.interviewType}
-- Role: ${session.role}
+- Role: ${promptSafe(session.role)}
 - Difficulty: ${session.difficulty}
-- Topics: ${session.selectedTopics.join(', ') || 'general'}
+- Topics: ${session.selectedTopics.map((t) => promptSafe(t, 50)).join(', ') || 'general'}
 
 Transcript:
 ${transcript}
@@ -188,12 +248,15 @@ async function startSession(req, res, next) {
 
     const {
       interviewType = 'technical',
-      role = 'Software Developer',
       difficulty = 'medium',
       duration = 30,
-      selectedTopics = [],
       resumeId = null,
     } = req.body;
+    const role = promptSafe(req.body.role || 'Software Developer') || 'Software Developer';
+    const selectedTopics = (Array.isArray(req.body.selectedTopics) ? req.body.selectedTopics : [])
+      .map((t) => promptSafe(t, 50))
+      .filter(Boolean)
+      .slice(0, 10);
 
     // Build resume context if resumeId is provided
     let resumeContext = '';
@@ -241,28 +304,86 @@ async function startSession(req, res, next) {
       selectedTopics,
       resumeId: resolvedResumeId,
       resumeContext,
-      status: 'active',
+      // Nothing is generated and the clock doesn't run until the candidate
+      // presses Start after the device check (POST /:id/begin).
+      status: 'ready',
       startedAt: new Date(),
-      currentQuestionNumber: 1,
+      currentQuestionNumber: 0,
       messages: [],
       securityPolicy: buildSecurityPolicy(),
     });
 
-    // Generate first interviewer message
+    return res.status(201).json({ session });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /:id/begin — the candidate pressed Start: generate the first question and start the clock.
+// Safe to call twice: an interview that already began is returned as it is.
+async function beginSession(req, res, next) {
+  try {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ message: 'Not authorized' });
+
+    const session = await MockInterviewSession.findById(req.params.id);
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+    if (String(session.userId) !== String(user._id)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    if (session.status === 'active') return res.status(200).json({ session });
+    if (session.status !== 'ready') {
+      return res.status(409).json({ message: `Interview session is ${session.status}`, session });
+    }
+
+    // Take the reply lock so a double click can't generate two first questions
+    const staleBefore = new Date(Date.now() - REPLY_LOCK_STALE_MS);
+    const locked = await MockInterviewSession.findOneAndUpdate(
+      {
+        _id: session._id,
+        status: 'ready',
+        $or: [{ awaitingReplySince: null }, { awaitingReplySince: { $lt: staleBefore } }],
+      },
+      { $set: { awaitingReplySince: new Date() } },
+      { new: true }
+    );
+    if (!locked) {
+      return res.status(409).json({ message: 'The interview is already starting. Please wait a moment.' });
+    }
+
     let aiContent;
     try {
       aiContent = await groqChat([
-        { role: 'system', content: buildSystemPrompt(session) },
+        { role: 'system', content: buildSystemPrompt(locked) },
         { role: 'user', content: 'Please begin the interview. Introduce yourself briefly and ask your first question.' },
       ]);
-    } catch (_) {
-      aiContent = `Hello! I'm your interviewer today. Let's get started. Could you tell me about your experience with ${session.selectedTopics[0] || session.role}?`;
+      if (!aiContent || !aiContent.trim()) throw new Error('Empty AI response');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[mock-interview] could not begin session:', err.message);
+      await MockInterviewSession.updateOne({ _id: locked._id }, { $set: { awaitingReplySince: null } });
+      return res.status(502).json({
+        message: 'The AI interviewer is unavailable right now. Please try again in a minute.',
+      });
     }
 
-    session.messages.push({ role: 'interviewer', content: aiContent, timestamp: new Date() });
-    await session.save();
+    // The candidate may have left (abandoned) while the AI was replying
+    const fresh = await MockInterviewSession.findById(locked._id).select('status');
+    if (!fresh || fresh.status !== 'ready') {
+      await MockInterviewSession.updateOne({ _id: locked._id }, { $set: { awaitingReplySince: null } });
+      return res.status(409).json({ message: 'Interview session is no longer waiting to start' });
+    }
 
-    return res.status(201).json({ session });
+    locked.messages.push({ role: 'interviewer', content: aiContent, timestamp: new Date() });
+    locked.currentQuestionNumber = 1;
+    locked.status = 'active';
+    // Time starts when the first question is shown
+    locked.startedAt = new Date();
+    locked.awaitingReplySince = null;
+    await locked.save();
+
+    return res.status(200).json({ session: locked });
   } catch (err) {
     return next(err);
   }
@@ -310,33 +431,59 @@ async function sendMessage(req, res, next) {
       });
     }
 
-    const { content } = req.body;
-
-    // Save user message
-    session.messages.push({
-      role: 'user',
-      content: String(content).trim(),
-      timestamp: new Date(),
-    });
-
-    // Build windowed message history for Groq (sliding window applied here)
-    const chatMessages = buildGroqMessages(session);
-
-    // Generate AI follow-up
-    let aiContent;
-    try {
-      aiContent = await groqChat(chatMessages);
-    } catch (_) {
-      aiContent = "That's interesting. Could you elaborate on that a bit more?";
+    if (Date.now() > sessionDeadline(session) + DURATION_GRACE_MS) {
+      return res.status(409).json({
+        message: 'Time is up for this interview. End it to get your evaluation.',
+        timeUp: true,
+      });
     }
 
-    session.messages.push({ role: 'interviewer', content: aiContent, timestamp: new Date() });
+    // Take the reply lock atomically so two messages can't be answered at once
+    const staleBefore = new Date(Date.now() - REPLY_LOCK_STALE_MS);
+    const locked = await MockInterviewSession.findOneAndUpdate(
+      {
+        _id: session._id,
+        status: 'active',
+        $or: [{ awaitingReplySince: null }, { awaitingReplySince: { $lt: staleBefore } }],
+      },
+      { $set: { awaitingReplySince: new Date() } },
+      { new: true }
+    );
+    if (!locked) {
+      return res.status(409).json({ message: 'Please wait for the interviewer to reply before sending another message.' });
+    }
 
-    // Count interviewer messages as question number
-    session.currentQuestionNumber = session.messages.filter((m) => m.role === 'interviewer').length;
+    const { content } = req.body;
+    const userMessage = { role: 'user', content: String(content).trim(), timestamp: new Date() };
+    locked.messages.push(userMessage);
 
-    await session.save();
-    return res.status(200).json({ session });
+    // Generate AI follow-up. On failure nothing is saved, so the user can resend.
+    let aiContent;
+    try {
+      aiContent = await groqChat(buildGroqMessages(locked));
+      if (!aiContent || !aiContent.trim()) throw new Error('Empty AI response');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[mock-interview] reply failed:', err.message);
+      await MockInterviewSession.updateOne({ _id: locked._id }, { $set: { awaitingReplySince: null } });
+      return res.status(502).json({
+        message: 'The AI interviewer could not respond. Your answer was not saved, please send it again.',
+      });
+    }
+
+    locked.messages.push({ role: 'interviewer', content: aiContent, timestamp: new Date() });
+    locked.currentQuestionNumber = locked.messages.filter((m) => m.role === 'interviewer').length;
+    locked.awaitingReplySince = null;
+
+    // The session may have been ended or terminated while the AI was replying
+    const fresh = await MockInterviewSession.findById(locked._id).select('status');
+    if (!fresh || fresh.status !== 'active') {
+      await MockInterviewSession.updateOne({ _id: locked._id }, { $set: { awaitingReplySince: null } });
+      return res.status(409).json({ message: 'Interview session is not active' });
+    }
+
+    await locked.save();
+    return res.status(200).json({ session: locked });
   } catch (err) {
     return next(err);
   }
@@ -354,59 +501,21 @@ async function endSession(req, res, next) {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    if (session.status !== 'active') {
+    const { status = 'completed' } = req.body;
+    // A session that never began can only be abandoned
+    const canEnd = session.status === 'active' || (session.status === 'ready' && status === 'abandoned');
+    if (!canEnd) {
       return res.status(400).json({ message: 'Interview session is not active' });
     }
 
-    const { status = 'completed' } = req.body;
     session.status = status;
     session.endedAt = new Date();
 
-    // Generate evaluation if completed (not abandoned) and there are messages
-    if (status === 'completed' && session.messages.length >= 2) {
-      try {
-        const evalPrompt = buildEvaluationPrompt(session);
-        const evalRaw = await groqChat(
-          [
-            { role: 'system', content: 'You are an interview evaluation expert. Respond only with valid JSON.' },
-            { role: 'user', content: evalPrompt },
-          ],
-          { temperature: 0.3, maxTokens: 4096 }
-        );
+    session.awaitingReplySince = null;
 
-        // Parse JSON — strip code fences if the model adds them
-        let cleaned = evalRaw.trim();
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-        }
-
-        const evalData = JSON.parse(cleaned);
-
-        session.evaluation = {
-          overallScore: Math.min(100, Math.max(0, Number(evalData.overallScore) || 0)),
-          strengths: Array.isArray(evalData.strengths) ? evalData.strengths : [],
-          weaknesses: Array.isArray(evalData.weaknesses) ? evalData.weaknesses : [],
-          topicFeedback: Array.isArray(evalData.topicFeedback) ? evalData.topicFeedback : [],
-          communicationFeedback: String(evalData.communicationFeedback || ''),
-          technicalDepthFeedback: String(evalData.technicalDepthFeedback || ''),
-          improvementTips: Array.isArray(evalData.improvementTips) ? evalData.improvementTips : [],
-          recommendedNextSteps: Array.isArray(evalData.recommendedNextSteps) ? evalData.recommendedNextSteps : [],
-          summary: String(evalData.summary || ''),
-        };
-      } catch (_) {
-        // Fallback evaluation if AI fails
-        session.evaluation = {
-          overallScore: 50,
-          strengths: ['Completed the interview'],
-          weaknesses: ['Evaluation could not be generated automatically'],
-          topicFeedback: [],
-          communicationFeedback: 'Unable to evaluate — please review the transcript.',
-          technicalDepthFeedback: '',
-          improvementTips: ['Practice more mock interviews to improve'],
-          recommendedNextSteps: ['Try another mock interview session'],
-          summary: 'The interview was completed. Automated evaluation encountered an issue.',
-        };
-      }
+    // Generate evaluation if completed (not abandoned) and the candidate answered
+    if (status === 'completed' && session.messages.some((m) => m.role === 'user')) {
+      await evaluateSession(session);
     }
 
     await session.save();
@@ -421,9 +530,9 @@ async function getHistory(req, res, next) {
     const user = await resolveUser(req);
     if (!user) return res.status(401).json({ message: 'Not authorized' });
 
-    const sessions = await MockInterviewSession.find({ userId: user._id })
+    const sessions = await MockInterviewSession.find({ userId: user._id, status: { $ne: 'ready' } })
       .select(
-        'interviewType role difficulty duration status startedAt endedAt currentQuestionNumber evaluation.overallScore evaluation.summary createdAt violationCount flagged terminationReason'
+        'interviewType role difficulty duration status startedAt endedAt currentQuestionNumber evaluation.overallScore evaluation.summary evaluationStatus createdAt violationCount flagged terminationReason'
       )
       .sort({ createdAt: -1 })
       .limit(50);
@@ -446,7 +555,8 @@ async function logViolation(req, res, next) {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    if (session.status !== 'active') {
+    // 'ready' covers the moment between pressing Start and the first question arriving
+    if (session.status !== 'active' && session.status !== 'ready') {
       return res.status(409).json({ message: 'Interview session is not active', security: securitySummary(session) });
     }
 
@@ -454,7 +564,7 @@ async function logViolation(req, res, next) {
     const { shouldTerminate } = recordViolation(session, { type, details });
     if (shouldTerminate) {
       // Terminated sessions get no evaluation; the transcript and audit log remain.
-      session.status = 'abandoned';
+      session.status = 'terminated';
       session.endedAt = new Date();
     }
     await session.save();
@@ -465,4 +575,31 @@ async function logViolation(req, res, next) {
   }
 }
 
-module.exports = { startSession, getSession, sendMessage, endSession, getHistory, logViolation };
+// POST /:id/evaluate — retry the AI evaluation of a completed interview
+async function retryEvaluation(req, res, next) {
+  try {
+    const user = await resolveUser(req);
+    if (!user) return res.status(401).json({ message: 'Not authorized' });
+
+    const session = await MockInterviewSession.findById(req.params.id);
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+    if (String(session.userId) !== String(user._id)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    if (session.status !== 'completed' || session.evaluationStatus === 'success') {
+      return res.status(409).json({ message: 'Only a completed interview without an evaluation can be re-evaluated' });
+    }
+
+    await evaluateSession(session);
+    await session.save();
+
+    if (session.evaluationStatus !== 'success') {
+      return res.status(502).json({ message: 'The evaluation could not be generated. Please try again later.', session });
+    }
+    return res.status(200).json({ session });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { startSession, beginSession, getSession, sendMessage, endSession, getHistory, logViolation, retryEvaluation };

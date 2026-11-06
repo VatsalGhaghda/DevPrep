@@ -74,11 +74,13 @@ const resumeSchema = new mongoose.Schema(
       trim: true,
       maxlength: 255
     },
+    // Legacy: PDFs used to be kept on local disk. New uploads are parsed in
+    // memory and only the extracted text/data is stored.
     filePath: {
       type: String,
-      required: true,
       trim: true,
-      maxlength: 2000
+      maxlength: 2000,
+      default: ''
     },
     rawText: {
       type: String,
@@ -92,6 +94,12 @@ const resumeSchema = new mongoose.Schema(
       type: String,
       enum: ['pending', 'success', 'failed'],
       default: 'pending'
+    },
+    // When the current AI extraction started; used to detect runs that died
+    // (e.g. server restart) so they can be retried.
+    extractionStartedAt: {
+      type: Date,
+      default: null
     },
     uploadDate: {
       type: Date,

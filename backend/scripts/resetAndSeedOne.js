@@ -13,6 +13,7 @@
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+const { confirmDestructive } = require('./confirmDestructive');
 const mongoose = require('mongoose');
 
 const CodingProblem = require('../src/models/CodingProblem');
@@ -165,6 +166,8 @@ async function main() {
   console.log('  DevPrep — Reset DB & Seed One Problem (CF 1A)');
   console.log('══════════════════════════════════════════════════════');
   console.log('');
+
+  confirmDestructive('delete ALL coding problems', MONGO_URI);
 
   // 1. Connect
   console.log('📡 Connecting to MongoDB...');

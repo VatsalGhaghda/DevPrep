@@ -1,4 +1,5 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+const { confirmDestructive } = require('./confirmDestructive');
 const mongoose = require('mongoose');
 const CodingProblem = require('../src/models/CodingProblem');
 
@@ -297,6 +298,8 @@ function slugify(title) {
 async function main() {
   console.log('🚀 Curated Problems Seeder');
   console.log('  Connecting to MongoDB...');
+
+  confirmDestructive('delete all Codeforces problems', MONGO_URI);
 
   await mongoose.connect(MONGO_URI);
   console.log('  ✓ Connected');

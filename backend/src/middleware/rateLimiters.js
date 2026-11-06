@@ -13,7 +13,8 @@
  * Limits (tuned for Groq free tier):
  *   AI Question Generation : 20 requests / 10 minutes per user
  *   Mock Interview Messages: 60 messages / 10 minutes per user
- *   Code Execution         : handled by executionLimiter (concurrency, not rate)
+ *   Code Execution         : 30 runs/submits / 5 minutes per user, plus
+ *                            executionLimiter for concurrency
  */
 
 const rateLimit = require('express-rate-limit');
@@ -69,8 +70,52 @@ const mockInterviewStartLimiter = buildLimiter({
   name: 'mock interview session'
 });
 
+// ── Voice answer transcription ─────────────────────────────────────────────────
+// Each request sends one recording to Groq Whisper. 40 per 10 minutes.
+const voiceTranscriptionLimiter = buildLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 40,
+  name: 'voice transcription'
+});
+
+// ── Developer analytics sync ──────────────────────────────────────────────────
+// Each sync calls GitHub / LeetCode / Codeforces. 30 per 10 minutes per user.
+const devAnalyticsSyncLimiter = buildLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  name: 'analytics sync'
+});
+
+// ── Code execution (run / submit) ─────────────────────────────────────────────
+// Each request starts a sandbox container. 30 per 5 minutes per user.
+const codeExecutionLimiter = buildLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: parseInt(process.env.CODE_EXECUTION_RATE_LIMIT || '30', 10),
+  name: 'code execution'
+});
+
+// ── Public endpoints (search, public profiles) ───────────────────────────────
+// Keyed by IP. 60 per minute.
+const publicLimiter = buildLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'public profile'
+});
+
+// ── Legacy email/password auth ───────────────────────────────────────────────
+const authLimiter = buildLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  name: 'authentication'
+});
+
 module.exports = {
+  codeExecutionLimiter,
+  publicLimiter,
+  authLimiter,
   questionGenerationLimiter,
   mockInterviewMessageLimiter,
-  mockInterviewStartLimiter
+  mockInterviewStartLimiter,
+  voiceTranscriptionLimiter,
+  devAnalyticsSyncLimiter
 };

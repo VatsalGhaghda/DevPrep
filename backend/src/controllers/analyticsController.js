@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { getTimezone, computeStreaks } = require('../utils/timezone');
 
 const MockInterviewSession = require('../models/MockInterviewSession');
 const SavedQuestion = require('../models/SavedQuestion');
@@ -16,7 +17,7 @@ async function getOverview(req, res, next) {
 
     // FIX: Use MockInterviewSession (active model) instead of the dead InterviewSession model.
     // MockInterviewSession stores evaluation scores in evaluation.overallScore.
-    const total = await MockInterviewSession.countDocuments({ userId });
+    const total = await MockInterviewSession.countDocuments({ userId, status: { $ne: 'ready' } });
     const completed = await MockInterviewSession.countDocuments({ userId, status: 'completed' });
 
     const avgAgg = await MockInterviewSession.aggregate([
@@ -27,7 +28,7 @@ async function getOverview(req, res, next) {
     const averageScore = avgAgg.length ? Math.round(avgAgg[0].averageScore * 10) / 10 : null;
 
     const byType = await MockInterviewSession.aggregate([
-      { $match: { userId } },
+      { $match: { userId, status: { $ne: 'ready' } } },
       { $group: { _id: '$interviewType', count: { $sum: 1 } } },
       { $project: { _id: 0, type: '$_id', count: 1 } },
       { $sort: { count: -1 } }
@@ -43,6 +44,7 @@ async function getOverview(req, res, next) {
 
 async function getPerformance(req, res, next) {
   try {
+    const tz = getTimezone(req);
     const userId = new mongoose.Types.ObjectId(req.user._id);
 
     // FIX: Query MockInterviewSession and read from evaluation.overallScore.
@@ -52,7 +54,7 @@ async function getPerformance(req, res, next) {
       {
         $project: {
           _id: 0,
-          date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } },
           overallScore: '$evaluation.overallScore',
           type: '$interviewType'
         }
@@ -255,7 +257,7 @@ async function getProfileInsights(req, res, next) {
         { $limit: 10 }
       ]),
       MockInterviewSession.aggregate([
-        { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+        { $match: { userId: new mongoose.Types.ObjectId(userId), status: { $ne: 'ready' } } },
         { $project: { interviewType: { $toLower: '$interviewType' } } },
         { $group: { _id: '$interviewType', count: { $sum: 1 } } },
         { $project: { _id: 0, type: '$_id', count: 1 } },
@@ -271,8 +273,8 @@ async function getProfileInsights(req, res, next) {
         },
         { $group: { _id: null, averageScore: { $avg: '$evaluation.overallScore' } } }
       ]),
-      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId) }),
-      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId), interviewType: 'resume-based' }),
+      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId), status: { $ne: 'ready' } }),
+      MockInterviewSession.countDocuments({ userId: new mongoose.Types.ObjectId(userId), interviewType: 'resume-based', status: { $ne: 'ready' } }),
       Submission.distinct('problemId', { ...matchUser, status: 'accepted', isDraft: false }).then(ids => ids.length),
       Resume.countDocuments({ userId: new mongoose.Types.ObjectId(userId) }),
       Submission.aggregate([
@@ -345,6 +347,7 @@ async function getProfileInsights(req, res, next) {
  */
 async function getSubmissionActivity(req, res, next) {
   try {
+    const tz = getTimezone(req);
     const clerkUserId = req.user.clerkUserId;
     const userId = req.user._id;
 
@@ -365,7 +368,7 @@ async function getSubmissionActivity(req, res, next) {
       },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } },
           count: { $sum: 1 }
         }
       },
@@ -385,6 +388,7 @@ async function getSubmissionActivity(req, res, next) {
  */
 async function getStreakData(req, res, next) {
   try {
+    const tz = getTimezone(req);
     const clerkUserId = req.user.clerkUserId;
     const userId = req.user._id;
 
@@ -397,7 +401,7 @@ async function getStreakData(req, res, next) {
       { $match: { ...matchUser, isDraft: false } },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: tz } }
         }
       },
       { $sort: { _id: 1 } }
@@ -409,44 +413,7 @@ async function getStreakData(req, res, next) {
       return res.status(200).json({ streak: { currentStreak: 0, longestStreak: 0, lastActiveDate: null } });
     }
 
-    // Calculate streaks
-    let longestStreak = 1;
-    let currentRun = 1;
-
-    for (let i = 1; i < dateStrings.length; i++) {
-      const prev = new Date(dateStrings[i - 1]);
-      const curr = new Date(dateStrings[i]);
-      const diffDays = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
-
-      if (diffDays === 1) {
-        currentRun++;
-        longestStreak = Math.max(longestStreak, currentRun);
-      } else {
-        currentRun = 1;
-      }
-    }
-
-    // Current streak: check if last active day is today or yesterday
-    const lastDate = new Date(dateStrings[dateStrings.length - 1]);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diffFromToday = Math.round((today - lastDate) / (1000 * 60 * 60 * 24));
-
-    let currentStreak = 0;
-    if (diffFromToday <= 1) {
-      // Walk backwards to count current streak
-      currentStreak = 1;
-      for (let i = dateStrings.length - 2; i >= 0; i--) {
-        const prev = new Date(dateStrings[i]);
-        const curr = new Date(dateStrings[i + 1]);
-        const diff = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
-        if (diff === 1) {
-          currentStreak++;
-        } else {
-          break;
-        }
-      }
-    }
+    const { currentStreak, longestStreak } = computeStreaks(dateStrings, tz);
 
     res.status(200).json({
       streak: {
@@ -488,17 +455,27 @@ async function getRecentActivity(req, res, next) {
     }));
 
     // 2. Mock / Resume Interviews
-    const interviews = await mongoose.model('MockInterviewSession').find({ userId })
+    // Sessions that never started (still 'ready') are not activity
+    const interviews = await mongoose.model('MockInterviewSession').find({ userId, status: { $ne: 'ready' } })
+      .select('interviewType role difficulty status evaluation.overallScore startedAt createdAt')
       .sort({ createdAt: -1 })
       .limit(10)
       .lean();
-      
-    const interviewActivity = interviews.map(i => ({
-      type: i.interviewType === 'resume' ? 'resume' : 'mock',
-      title: i.interviewType === 'resume' ? 'Resume Interview' : 'Mock Interview',
-      meta: `${i.jobRole || 'Role'}${i.jobExperience ? ` • ${i.jobExperience}` : ''}`,
-      timestamp: i.createdAt
-    }));
+
+    const typeLabel = { technical: 'Technical', hr: 'HR', mixed: 'Mixed' };
+    const interviewActivity = interviews.map(i => {
+      const isResume = i.interviewType === 'resume-based';
+      const score = i.evaluation && i.evaluation.overallScore;
+      return {
+        type: isResume ? 'resume' : 'mock',
+        title: isResume ? 'Resume Interview' : `${typeLabel[i.interviewType] || 'Mock'} Interview`,
+        meta: [i.role, i.difficulty, i.status !== 'completed' ? i.status : null].filter(Boolean).join(' • '),
+        status: i.status,
+        score: typeof score === 'number' ? score : null,
+        sessionId: String(i._id),
+        timestamp: i.startedAt || i.createdAt
+      };
+    });
 
     // 3. Coding Submissions
     const submissions = await mongoose.model('Submission').aggregate([
@@ -528,6 +505,8 @@ async function getRecentActivity(req, res, next) {
       type: 'coding',
       title: `Coding: ${s.problem.title}`,
       meta: `${s.status === 'accepted' ? 'Solved' : 'Attempted'} • ${s.problem.difficulty}`,
+      status: s.status,
+      language: s.language,
       timestamp: s.createdAt
     }));
 

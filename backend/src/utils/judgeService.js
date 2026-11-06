@@ -1,158 +1,136 @@
 /**
- * Judge Service — Docker-based code execution.
+ * Judge Service — runs user code through the sandbox (utils/runInDocker.js).
  *
- * Drop-in replacement for the Judge0 API version.
- * Exports the same interface: executeCode(), runAgainstTestCases()
+ * Exports: executeCode(), runAgainstTestCases(), compareOutput(), SUPPORTED_LANGUAGES
  */
 
 const path = require('path');
-const { runCode: dockerRunCode } = require('./runInDocker');
+const { runJob } = require('./runInDocker');
+const { AppError } = require('./AppError');
 
-const SUPPORTED_LANGUAGES = new Set([
+const SUPPORTED_LANGUAGES = [
   'javascript', 'js', 'node',
   'python', 'python3',
   'cpp', 'c++',
   'c',
   'java'
-]);
+];
+const SUPPORTED_SET = new Set(SUPPORTED_LANGUAGES);
 
 // ─── Path sanitizer (second layer of defence) ─────────────────────────────────
-// Even if the executor leaks a path, this catches it before the API response
-// reaches the client.
 const BACKEND_ROOT = path.resolve(__dirname, '../..');
 
 const SERVER_PATH_PATTERNS = [
-  // Match the backend root and any subpath (forward or back slashes)
   new RegExp(
-    BACKEND_ROOT.replace(/[\\/]/g, '[/\\\\]').replace(/[.*+?^${}()|[\]]/g, '\\$&') + '[/\\\\]?[^\n"]*',
+    BACKEND_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\\|\//g, '[/\\\\]') + '[/\\\\]?[^\n"]*',
     'gi'
   ),
-  // Any Windows absolute path  e.g. C:\Users\...  or  C:/Users/...
-  /[A-Za-z]:[/\\][^\n"']*/g,
-  // Partial paths leaking in Node.js stack traces: "at Object.<anonymous> (path/to/file.js:1:1)"
-  // Match filename paths inside parentheses in stack frames
   /\(([A-Za-z]:[/\\][^)\n]+)\)/g,
-  // Paths with project-specific dir names (project name as fallback)
-  /(?:DevPrep|executor|AWT project)[/\\][^\n"']*/gi,
+  /[A-Za-z]:[/\\][^\n"']*/g,
 ];
 
 function sanitizeServerPaths(msg) {
   if (!msg) return '';
   let clean = String(msg);
-  // First pass: replace full path matches
   for (const pattern of SERVER_PATH_PATTERNS) {
     clean = clean.replace(pattern, '<sandbox>');
   }
-  // Second pass: strip any remaining absolute path fragments (starts with drive letter)
-  clean = clean.replace(/[A-Za-z]:[/\\]\S+/g, '<sandbox>');
   return clean;
+}
+
+function unsupported(language) {
+  return {
+    stdout: '',
+    stderr: `Unsupported language: ${language}`,
+    status: 'compile_error',
+    time: '0',
+    memory: '0',
+    compileOutput: `Unsupported language: ${language}`
+  };
+}
+
+/** Map one sandbox run result onto the judge interface. */
+function toJudgeResult(r, elapsed) {
+  const error = sanitizeServerPaths(r.error || '');
+  if (r.timedOut) {
+    return { stdout: '', stderr: 'Time Limit Exceeded', status: 'time_limit', time: elapsed, memory: '0', compileOutput: '' };
+  }
+  if (r.runtimeError) {
+    // Keep partial stdout so the user can see how far the program got
+    return { stdout: r.output || '', stderr: error, status: 'runtime_error', time: elapsed, memory: '0', compileOutput: '' };
+  }
+  return { stdout: r.output || '', stderr: error, status: 'accepted', time: elapsed, memory: '0', compileOutput: '' };
+}
+
+/**
+ * Run code once per input. Throws AppError(503) when the sandbox itself is
+ * unavailable, so callers never record that as the user's failure.
+ */
+async function runBatch(language, sourceCode, inputs) {
+  const lang = String(language).toLowerCase().trim();
+  if (!SUPPORTED_SET.has(lang)) return inputs.map(() => unsupported(language));
+
+  const start = Date.now();
+  const job = await runJob({ language: lang, code: sourceCode, inputs });
+  const elapsed = ((Date.now() - start) / 1000 / Math.max(1, inputs.length)).toFixed(3);
+
+  if (job.infraError) {
+    throw new AppError(job.error || 'Code execution is temporarily unavailable', 503);
+  }
+
+  if (job.compileError) {
+    const msg = sanitizeServerPaths(job.error);
+    return inputs.map(() => ({ stdout: '', stderr: msg, status: 'compile_error', time: '0', memory: '0', compileOutput: msg }));
+  }
+
+  if (job.error && !job.results.length) {
+    const msg = sanitizeServerPaths(job.error);
+    return inputs.map(() => ({ stdout: '', stderr: msg, status: 'runtime_error', time: '0', memory: '0', compileOutput: '' }));
+  }
+
+  return inputs.map((_, i) =>
+    job.results[i]
+      ? toJudgeResult(job.results[i], elapsed)
+      : { stdout: '', stderr: 'Time Limit Exceeded', status: 'time_limit', time: elapsed, memory: '0', compileOutput: '' }
+  );
 }
 
 /**
  * Execute code with given stdin input.
- *
- * @param {string} language
- * @param {string} sourceCode
- * @param {string} stdin
  * @returns {{ stdout, stderr, status, time, memory, compileOutput }}
  */
 async function executeCode(language, sourceCode, stdin = '') {
-  const lang = String(language).toLowerCase().trim();
-
-  if (!SUPPORTED_LANGUAGES.has(lang)) {
-    return {
-      stdout: '',
-      stderr: `Unsupported language: ${language}`,
-      status: 'error',
-      time: '0',
-      memory: '0',
-      compileOutput: ''
-    };
-  }
-
-  const start = Date.now();
-  const result = await dockerRunCode({ code: sourceCode, language: lang, input: stdin });
-  const elapsed = ((Date.now() - start) / 1000).toFixed(3);
-
-  // Sanitize any paths that leaked through from the executor
-  const cleanError = sanitizeServerPaths(result.error || '');
-
-  // Map Docker result to the standard judge interface
-  if (result.timedOut) {
-    return {
-      stdout: '',
-      stderr: 'Time Limit Exceeded',
-      status: 'time_limit',
-      time: elapsed,
-      memory: '0',
-      compileOutput: ''
-    };
-  }
-
-  if (result.compileError) {
-    return {
-      stdout: '',
-      stderr: cleanError,
-      status: 'compile_error',
-      time: elapsed,
-      memory: '0',
-      compileOutput: cleanError
-    };
-  }
-
-  if (result.error && !result.output) {
-    return {
-      stdout: '',
-      stderr: cleanError,
-      status: 'runtime_error',
-      time: elapsed,
-      memory: '0',
-      compileOutput: ''
-    };
-  }
-
-  return {
-    stdout: result.output,
-    stderr: cleanError,
-    status: 'accepted',
-    time: elapsed,
-    memory: '0',
-    compileOutput: ''
-  };
+  const [result] = await runBatch(language, sourceCode, [stdin]);
+  return result;
 }
 
-/**
- * Compare user output to expected output.
- * Trims whitespace, normalises line endings.
- */
+/** Compare user output to expected output (trim, normalise line endings). */
 function compareOutput(userOutput, expectedOutput) {
   const normalize = (s) =>
     String(s || '')
       .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .join('\n')
       .trim();
   return normalize(userOutput) === normalize(expectedOutput);
 }
 
 /**
- * Run code against an array of test cases, compare outputs.
- *
- * @param {string} language
- * @param {string} sourceCode
- * @param {Array<{input: string, expectedOutput: string}>} testCases
+ * Run code against an array of test cases (compiled once), compare outputs.
  * @returns {{ results, passedCount, totalCount, overallStatus }}
  */
 async function runAgainstTestCases(language, sourceCode, testCases) {
+  const execResults = await runBatch(language, sourceCode, testCases.map((tc) => tc.input));
+
   const results = [];
   let passedCount = 0;
 
-  for (const tc of testCases) {
-    const execResult = await executeCode(language, sourceCode, tc.input);
-
-    const actualOutput   = (execResult.stdout || '').trim();
+  testCases.forEach((tc, i) => {
+    const execResult = execResults[i];
+    const actualOutput = (execResult.stdout || '').trim();
     const expectedOutput = (tc.expectedOutput || '').trim();
-    const passed =
-      execResult.status === 'accepted' && compareOutput(actualOutput, expectedOutput);
-
+    const passed = execResult.status === 'accepted' && compareOutput(actualOutput, expectedOutput);
     if (passed) passedCount++;
 
     results.push({
@@ -160,40 +138,33 @@ async function runAgainstTestCases(language, sourceCode, testCases) {
       expectedOutput,
       actualOutput,
       passed,
-      status: passed
-        ? 'accepted'
-        : execResult.status === 'accepted'
-          ? 'wrong_answer'
-          : execResult.status,
+      status: passed ? 'accepted' : execResult.status === 'accepted' ? 'wrong_answer' : execResult.status,
       time: execResult.time,
       memory: execResult.memory,
       stderr: execResult.stderr,
       compileOutput: execResult.compileOutput
     });
+  });
 
-    // Stop early on compile error (all subsequent tests will fail the same way)
-    if (execResult.status === 'compile_error') break;
-  }
+  // A compile error is the same for every test, report it once
+  const trimmed = results.length && results[0].status === 'compile_error' ? [results[0]] : results;
 
-  // Determine overall status: use the most severe failure across all results.
-  // Priority: compile_error > time_limit > memory_limit > runtime_error > wrong_answer > accepted
+  // Most severe failure wins:
+  // compile_error > time_limit > memory_limit > runtime_error > wrong_answer > accepted
   const SEVERITY = { compile_error: 5, time_limit: 4, memory_limit: 3, runtime_error: 2, wrong_answer: 1, accepted: 0 };
   let overallStatus = 'accepted';
   if (passedCount < testCases.length) {
-    for (const r of results) {
+    for (const r of trimmed) {
       if (!r.passed) {
         const s = r.status || 'wrong_answer';
-        if ((SEVERITY[s] || 0) > (SEVERITY[overallStatus] || 0)) {
-          overallStatus = s;
-        }
+        if ((SEVERITY[s] || 0) > (SEVERITY[overallStatus] || 0)) overallStatus = s;
       }
     }
-    // Ensure we never return 'accepted' when some tests failed
     if (overallStatus === 'accepted') overallStatus = 'wrong_answer';
   }
 
   return {
-    results,
+    results: trimmed,
     passedCount,
     totalCount: testCases.length,
     overallStatus
@@ -203,5 +174,6 @@ async function runAgainstTestCases(language, sourceCode, testCases) {
 module.exports = {
   executeCode,
   runAgainstTestCases,
-  compareOutput
+  compareOutput,
+  SUPPORTED_LANGUAGES
 };

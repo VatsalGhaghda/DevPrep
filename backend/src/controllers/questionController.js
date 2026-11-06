@@ -7,11 +7,9 @@ function normalizeTopics(topics) {
 }
 
 const { generateInterviewQuestions } = require('../utils/questionGeneration');
-const { clerkClient } = require('@clerk/clerk-sdk-node');
 const SavedQuestion = require('../models/SavedQuestion');
 const QuizAttempt = require('../models/QuizAttempt');
-const User = require('../models/User');
-const { getClerkUserIdFromAuth, upsertUserFromClerkApi } = require('./clerkSyncController');
+const { resolveUser } = require('../utils/resolveUser');
 const { buildSecurityPolicy, recordViolation, securitySummary } = require('../utils/assessmentSecurity');
 
 // Seconds allowed per question, by difficulty
@@ -28,17 +26,7 @@ function normalizeQuestionKey(q) {
     .trim();
 }
 
-async function getOrCreateUserFromClerk(req) {
-  const clerkUserId = getClerkUserIdFromAuth(req);
-  if (!clerkUserId) return null;
-
-  let user = await User.findOne({ clerkUserId });
-  if (!user) {
-    const clerkUser = await clerkClient.users.getUser(clerkUserId);
-    user = await upsertUserFromClerkApi(clerkUser);
-  }
-  return user;
-}
+const getOrCreateUserFromClerk = resolveUser;
 
 /**
  * Upsert questions into the user's saved question bank.
@@ -119,6 +107,25 @@ function attemptView(attempt) {
   };
 }
 
+function isPastDeadline(attempt, now = Date.now()) {
+  return Boolean(attempt.status === 'active' && attempt.expiresAt && now > attempt.expiresAt.getTime() + SUBMIT_GRACE_MS);
+}
+
+/**
+ * The server owns the quiz timer: an active attempt past its deadline (plus
+ * grace) is closed with whatever was submitted (nothing), scoring 0.
+ */
+async function expireIfOverdue(attempt) {
+  if (!isPastDeadline(attempt)) return false;
+  attempt.answers = attempt.questions.map(() => null);
+  attempt.score = { correct: 0, total: attempt.questions.length, pct: 0 };
+  attempt.status = 'submitted';
+  attempt.submittedAt = new Date();
+  attempt.late = true;
+  await attempt.save();
+  return true;
+}
+
 async function loadOwnAttempt(req, res) {
   const user = await getOrCreateUserFromClerk(req);
   if (!user) {
@@ -137,7 +144,8 @@ async function loadOwnAttempt(req, res) {
     return null;
   }
 
-  return { user, attempt };
+  const expired = await expireIfOverdue(attempt);
+  return { user, attempt, expired };
 }
 
 function createAttempt({ user, role, difficulty, topics, questions, retakeOf = null }) {
@@ -193,8 +201,8 @@ async function generateQuestions(req, res, next) {
       : [];
 
     const items = await generateInterviewQuestions({
-      role,
-      difficulty,
+      role: safeRole,
+      difficulty: safeDifficulty,
       topics: safeTopics,
       count: safeCount,
       excludeQuestions: [...clientExcludes, ...savedExcludes]
@@ -336,7 +344,14 @@ async function submitAttempt(req, res, next) {
   try {
     const loaded = await loadOwnAttempt(req, res);
     if (!loaded) return undefined;
-    const { attempt } = loaded;
+    const { attempt, expired } = loaded;
+
+    if (expired) {
+      return res.status(409).json({
+        message: 'Time ran out before these answers arrived, so they could not be accepted.',
+        attempt: attemptView(attempt)
+      });
+    }
 
     if (attempt.status !== 'active') {
       return res.status(409).json({ message: `Quiz attempt is ${attempt.status}`, attempt: attemptView(attempt) });

@@ -23,7 +23,12 @@ const AssessmentGate = ({
   startLabel = 'I Understand — Start',
   onStart,
   onCancel,
-  cancelLabel = 'Go Back'
+  cancelLabel = 'Go Back',
+  // Optional pre-check (e.g. device setup) shown above the rules
+  children,
+  // Keeps Start disabled until the pre-check passes
+  startDisabled = false,
+  startHint
 }) => {
   const [agreed, setAgreed] = useState(false);
   useEffect(() => {
@@ -74,7 +79,7 @@ const AssessmentGate = ({
           aria-labelledby="assessment-gate-title"
         >
           <motion.div
-            className="m-auto w-full max-w-lg rounded-2xl border border-white/10 bg-[#0b1220]/95 shadow-[0_10px_40px_rgba(0,0,0,0.55)] overflow-hidden"
+            className={`m-auto w-full ${children ? 'max-w-3xl' : 'max-w-lg'} rounded-2xl border border-white/10 bg-[#0b1220]/95 shadow-[0_10px_40px_rgba(0,0,0,0.55)] overflow-hidden`}
             initial={{ opacity: 0, y: 12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -93,6 +98,15 @@ const AssessmentGate = ({
             </div>
 
             <div className="px-6 py-5 space-y-4">
+              {children && (
+                <div className="pb-4 border-b border-white/10">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Step 1 · Device check</div>
+                  {children}
+                </div>
+              )}
+              {children && (
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Step 2 · Rules</div>
+              )}
               <ul className="space-y-3">
                 {rules.map(({ Icon, text }) => (
                   <li key={text} className="flex items-start gap-3 text-sm text-slate-300">
@@ -130,7 +144,10 @@ const AssessmentGate = ({
               </label>
             </div>
 
-            <div className="px-6 py-4 border-t border-white/10 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <div className="px-6 py-4 border-t border-white/10 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+              {startDisabled && startHint && (
+                <span className="text-xs text-slate-400 sm:mr-auto">{startHint}</span>
+              )}
               {onCancel && (
                 <button
                   type="button"
@@ -144,7 +161,7 @@ const AssessmentGate = ({
               <button
                 type="button"
                 onClick={onStart}
-                disabled={!agreed || starting}
+                disabled={!agreed || starting || startDisabled}
                 className="h-10 px-5 rounded-xl bg-violet-600 hover:bg-violet-700 border border-violet-500 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {starting ? 'Starting…' : resuming ? 'Resume' : startLabel}

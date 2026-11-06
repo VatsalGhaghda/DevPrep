@@ -24,7 +24,13 @@ function safeInt(value, fallback) {
 }
 
 function buildPrompt({ role, difficulty, topics, count, excludeQuestions = [] }) {
-  const safeRole = String(role || 'Software Engineer').trim() || 'Software Engineer';
+  // Strip newlines/control chars and cap length so user text can't rewrite the prompt
+  const safeRole =
+    String(role || 'Software Engineer')
+      .replace(/[\u0000-\u001f\u007f"`]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 100) || 'Software Engineer';
   const safeDifficulty = normalizeDifficulty(difficulty);
   const safeTopics = normalizeTopics(topics);
   const safeCount = Math.max(1, Math.min(safeInt(count, 10) || 10, 20));

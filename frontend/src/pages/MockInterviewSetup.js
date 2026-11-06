@@ -24,6 +24,7 @@ import Sidebar from '../components/layout/Sidebar';
 import Footer from '../components/layout/Footer';
 import Modal from '../components/ui/Modal';
 import { clerkAPI, mockInterviewAPI } from '../services/api';
+import { SIDEBAR_ITEMS, NAVBAR_LINKS } from '../config/navigation';
 
 const ROLE_PRESETS = [
   'Frontend Developer',
@@ -110,28 +111,9 @@ const MockInterviewSetup = () => {
     (dbProfile && dbProfile.name) ||
     'User';
 
-  const sidebarItems = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard', Icon: LayoutDashboard },
-      { label: 'Profile', path: '/profile', Icon: User },
-      { label: 'Question Generator', path: '/questions/generate', Icon: Brain },
-      { label: 'Mock Interview', path: '/interview/mock', Icon: PlayCircle },
-      { label: 'Resume Interview', path: '/interview/resume', Icon: FileText },
-      { label: 'Coding Practice', path: '/coding/practice', Icon: Code2 }
-    ],
-    []
-  );
+  const sidebarItems = SIDEBAR_ITEMS;
 
-  const navbarLinks = useMemo(
-    () => [
-      { label: 'Dashboard', path: '/dashboard' },
-      { label: 'Questions', path: '/questions/generate' },
-      { label: 'Mock', path: '/interview/mock' },
-      { label: 'Resume', path: '/interview/resume' },
-      { label: 'Coding', path: '/coding/practice' }
-    ],
-    []
-  );
+  const navbarLinks = NAVBAR_LINKS;
 
   const availableTopics = useMemo(() => {
     return TOPICS_MAP[interviewType] || TOPICS_MAP.technical;
@@ -232,6 +214,7 @@ const MockInterviewSetup = () => {
       case 'completed': return 'text-emerald-400';
       case 'active': return 'text-amber-400';
       case 'abandoned': return 'text-rose-400';
+      case 'terminated': return 'text-rose-400';
       default: return 'text-slate-400';
     }
   };

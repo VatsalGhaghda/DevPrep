@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
+const { escapeRegex } = require('../utils/escapeRegex');
 
 const User = require('../models/User');
-const InterviewSession = require('../models/InterviewSession');
+const MockInterviewSession = require('../models/MockInterviewSession');
+
 
 async function getUsers(req, res, next) {
   try {
@@ -13,13 +15,13 @@ async function getUsers(req, res, next) {
     const filter = {};
     if (search) {
       filter.$or = [
-        { name: { $regex: String(search), $options: 'i' } },
-        { email: { $regex: String(search), $options: 'i' } }
+        { name: { $regex: escapeRegex(search), $options: 'i' } },
+        { email: { $regex: escapeRegex(search), $options: 'i' } }
       ];
     }
 
     const users = await User.find(filter)
-      .select('-password -resetPasswordToken -resetPasswordExpires')
+      .select('-password -resetPasswordToken -resetPasswordExpires -emailVerificationToken -emailVerificationExpires')
       .sort({ createdAt: -1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum);
@@ -43,16 +45,16 @@ async function getUsers(req, res, next) {
 async function getStats(req, res, next) {
   try {
     const totalUsers = await User.countDocuments();
-    const totalInterviews = await InterviewSession.countDocuments();
-    const completedInterviews = await InterviewSession.countDocuments({ status: 'completed' });
+    const totalInterviews = await MockInterviewSession.countDocuments();
+    const completedInterviews = await MockInterviewSession.countDocuments({ status: 'completed' });
 
-    const byType = await InterviewSession.aggregate([
-      { $group: { _id: '$type', count: { $sum: 1 } } },
+    const byType = await MockInterviewSession.aggregate([
+      { $group: { _id: '$interviewType', count: { $sum: 1 } } },
       { $project: { _id: 0, type: '$_id', count: 1 } },
       { $sort: { count: -1 } }
     ]);
 
-    const byDifficulty = await InterviewSession.aggregate([
+    const byDifficulty = await MockInterviewSession.aggregate([
       { $match: { difficulty: { $ne: '' } } },
       { $group: { _id: '$difficulty', count: { $sum: 1 } } },
       { $project: { _id: 0, difficulty: '$_id', count: 1 } },
@@ -90,7 +92,7 @@ async function getAnalytics(req, res, next) {
       { $sort: { date: 1 } }
     ]);
 
-    const interviewVolume = await InterviewSession.aggregate([
+    const interviewVolume = await MockInterviewSession.aggregate([
       { $match: { createdAt: { $gte: last30Days } } },
       {
         $group: {
