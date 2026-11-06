@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import FloatingLabelInput from '../components/FloatingLabelInput';
 import { AnimatedDeveloper, EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
 import { useSignIn, useSignUp, useUser } from '@clerk/clerk-react';
+import { BrandMark } from '../components/ui/BrandLogo';
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -230,6 +231,7 @@ const Auth = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5 }}
           >
+            <BrandMark className="w-20 h-20 mx-auto mb-5" alt="" />
             <motion.h1 
               className="text-6xl font-bold mb-4 bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 bg-clip-text text-transparent" 
               style={{ fontFamily: 'Outfit, sans-serif', letterSpacing: '-0.02em' }}
@@ -352,6 +354,7 @@ const Auth = () => {
             <div className="relative backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-8 shadow-[0_8px_32px_rgba(0,0,0,0.4)] lg:min-h-[640px]">
               {/* Logo for mobile with animation */}
               <div className="lg:hidden text-center mb-8">
+                <BrandMark className="w-16 h-16 mx-auto mb-3" alt="" />
                 <motion.h1 
                   className="text-4xl font-bold bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 bg-clip-text text-transparent" 
                   style={{ fontFamily: 'Outfit, sans-serif' }}

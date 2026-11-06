@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Code2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { BrandMark } from '../ui/BrandLogo';
 import { NavLink } from 'react-router-dom';
 
 const Sidebar = ({
@@ -25,9 +26,7 @@ const Sidebar = ({
     >
       <div className={`h-[72px] border-b border-white/10 flex items-center ${collapsed ? 'justify-center' : 'px-4 justify-between gap-3'}`}>
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 flex items-center justify-center shrink-0 shadow-lg">
-            <Code2 className="w-4 h-4 text-white" />
-          </div>
+          <BrandMark className="w-10 h-10" alt={collapsed ? 'DevPrep' : ''} />
           {!collapsed && (
             <div className="text-xl font-bold bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 bg-clip-text text-transparent truncate">
               DevPrep

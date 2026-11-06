@@ -5,6 +5,7 @@ import { useUser, useClerk } from '@clerk/clerk-react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation, NavLink } from 'react-router-dom';
 import { userAPI } from '../../services/api';
+import { BrandMark } from '../ui/BrandLogo';
 
 /**
  * App-wide Navbar component.
@@ -178,6 +179,7 @@ const Navbar = ({ brand = 'DevPrep', activeLabel = 'Dashboard', onOpenMobileSide
           >
             <Menu className="w-5 h-5 text-slate-300" />
           </button>
+          <BrandMark className="hidden sm:block md:hidden w-9 h-9" />
           <div className="min-w-0">
             {brand ? (
               <>

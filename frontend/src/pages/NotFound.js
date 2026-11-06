@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Home, ArrowLeft } from 'lucide-react';
 import { EnhancedAnimatedBackground } from '../components/EnhancedAnimatedBackground';
+import { BrandMark } from '../components/ui/BrandLogo';
 
 const NotFound = () => {
   const navigate = useNavigate();
@@ -16,6 +17,8 @@ const NotFound = () => {
         transition={{ duration: 0.6 }}
         className="relative z-10 text-center px-6 max-w-md"
       >
+        <BrandMark className="w-14 h-14 mx-auto mb-4" />
+
         {/* Glowing 404 */}
         <div className="text-8xl font-black bg-gradient-to-r from-cyan-400 via-violet-400 to-pink-400 bg-clip-text text-transparent mb-4 select-none">
           404
